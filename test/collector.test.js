@@ -1,0 +1,73 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { collectCodex, collectOpenCode, importSessions, normalizeSession, openDatabase } from '../src/collector.js';
+
+const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'usage-monitor-'));
+
+test('migrates existing sessions to codex platform without losing data', () => {
+  const directory = temp(), file = path.join(directory, 'usage.sqlite');
+  const old = new DatabaseSync(file);
+  old.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, agent TEXT NOT NULL, source_path TEXT NOT NULL UNIQUE, project TEXT, model TEXT, started_at TEXT, ended_at TEXT, duration_seconds INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, cached_input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, estimated_cost_usd REAL, updated_at TEXT NOT NULL); INSERT INTO sessions (id,agent,source_path,updated_at) VALUES ('old','Codex CLI','old.jsonl','2026-01-01')"); old.close();
+  const db = openDatabase(file), row = db.prepare('SELECT id, platform, agent FROM sessions').get();
+  assert.equal(row.id, 'old'); assert.equal(row.platform, 'codex'); assert.equal(row.agent, 'Codex CLI');
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='model_pricing'").get().name, 'model_pricing');
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('imports Codex usage with platform and normalizes future collector contract', () => {
+  const directory = temp(), sessions = path.join(directory, 'sessions', '2026', '08', '31'); fs.mkdirSync(sessions, { recursive: true });
+  const file = path.join(sessions, 'rollout-test.jsonl');
+  const rows = [
+    { timestamp: '2026-08-31T10:00:00Z', type: 'session_meta', payload: { session_id: 'abc', timestamp: '2026-08-31T10:00:00Z', cwd: 'C:/work', originator: 'Codex Desktop' } },
+    { timestamp: '2026-08-31T10:01:00Z', type: 'turn_context', payload: { model: 'gpt-test' } },
+    { timestamp: '2026-08-31T10:02:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 60, output_tokens: 20, reasoning_output_tokens: 10, total_tokens: 130 } } } }
+  ]; fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  collectCodex(db, { root: path.join(directory, 'sessions') });
+  const codex = db.prepare('SELECT platform, agent, model, total_tokens FROM sessions WHERE id=?').get('abc');
+  assert.equal(codex.platform, 'codex'); assert.equal(codex.agent, 'Codex Desktop'); assert.equal(codex.model, 'gpt-test'); assert.equal(codex.total_tokens, 130);
+  const future = normalizeSession({ platform: 'opencode', agent: 'OpenCode', id: 'open-1', sourcePath: 'db', model: 'x', input: 3, cached: 1, output: 2, reasoning: 0, total: 5 });
+  importSessions(db, [future]);
+  const opencode = db.prepare('SELECT platform, agent, total_tokens FROM sessions WHERE id=?').get('open-1');
+  assert.equal(opencode.platform, 'opencode'); assert.equal(opencode.agent, 'OpenCode'); assert.equal(opencode.total_tokens, 5);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('preserves missing reported cost while retaining a real free cost', () => {
+  assert.equal(normalizeSession({ platform: 'codex', agent: 'Codex CLI', id: 'unknown', sourcePath: 'x', reportedCost: null }).reportedCost, null);
+  assert.equal(normalizeSession({ platform: 'opencode', agent: 'OpenCode', id: 'free', sourcePath: 'y', reportedCost: 0 }).reportedCost, 0);
+});
+
+test('stored price changes computed cost without changing session data', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  importSessions(db, [{ platform: 'codex', agent: 'Codex CLI', id: 'cost-1', sourcePath: 'session', model: 'gpt-test', input: 100, cached: 50, output: 20, reasoning: 10, total: 130 }]);
+  const query = `SELECT CASE WHEN p.model IS NOT NULL THEN (s.input_tokens*p.input_usd_per_million+s.cached_input_tokens*p.cached_input_usd_per_million+s.output_tokens*p.output_usd_per_million+s.reasoning_tokens*p.reasoning_usd_per_million)/1000000.0 END cost FROM sessions s LEFT JOIN model_pricing p ON p.platform=s.platform AND p.model=s.model WHERE s.id='cost-1'`;
+  assert.equal(db.prepare(query).get().cost, null);
+  const price = db.prepare('INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  price.run('codex', 'gpt-test', 1, 0.5, 2, 2, 'now'); assert.equal(db.prepare(query).get().cost, 0.000185);
+  db.prepare('UPDATE model_pricing SET output_usd_per_million=4').run(); assert.equal(db.prepare(query).get().cost, 0.000225);
+  assert.equal(db.prepare("SELECT total_tokens FROM sessions WHERE id='cost-1'").get().total_tokens, 130);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('imports OpenCode model IDs, reported cost and cache reads', () => {
+  const directory = temp(), sourceFile = path.join(directory, 'opencode.db'), target = openDatabase(path.join(directory, 'usage.sqlite'));
+  const source = new DatabaseSync(sourceFile);
+  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); INSERT INTO project VALUES ('p1','Demo'); INSERT INTO session VALUES ('s1','p1','C:/demo','build','{"id":"provider/model","providerID":"openai","variant":"fast"}',0.42,1000,61000,100,25,15,75);`); source.close();
+  const result = collectOpenCode(target, { file: sourceFile });
+  assert.equal(result.status, 'connected'); assert.equal(result.imported, 1);
+  const row = target.prepare('SELECT platform, provider, model, project, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, reported_cost_usd FROM sessions WHERE id=?').get('opencode:s1');
+  assert.equal(row.platform, 'opencode'); assert.equal(row.provider, 'openai'); assert.equal(row.model, 'provider/model'); assert.equal(row.project, 'Demo'); assert.equal(row.input_tokens, 100); assert.equal(row.cached_input_tokens, 75); assert.equal(row.total_tokens, 215); assert.equal(row.reported_cost_usd, 0.42);
+  target.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('reports unavailable OpenCode database without interrupting imports', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const result = collectOpenCode(db, { file: path.join(directory, 'missing.db') });
+  assert.equal(result.status, 'not_connected'); assert.equal(result.imported, 0);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
