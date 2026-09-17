@@ -12,5 +12,5 @@
     <details class="panel"><summary>Sessions <span id="session-count"></span></summary><div class="table-wrap"><table><thead><tr><th>Session</th><th>Plateforme / agent</th><th>Modèle</th><th>Projet</th><th>Durée</th><th>Input</th><th>Cache</th><th>Output</th><th>Total</th><th>Coût</th></tr></thead><tbody id="sessions"></tbody></table></div></details>
     <details class="panel"><summary>Prix des modèles <span>USD / million tokens</span></summary><p class="muted settings-note">Saisis une fois. Les coûts se recalculent sans réimporter sessions.</p><form id="pricing"><div class="table-wrap"><table><thead><tr><th>Plateforme</th><th>Modèle</th><th>Input</th><th>Cache</th><th>Output</th><th>Reasoning</th></tr></thead><tbody id="pricing-rows"></tbody></table></div><button type="submit">Enregistrer prix</button></form></details>
     <section class="sources panel"><h2>Sources</h2><div id="sources"></div></section>
-  </main><script type="module" src="/app.js"></script>
+  </main><div id="tooltip" role="tooltip" hidden></div><script type="module" src="/app.js"></script>
 </body></html>

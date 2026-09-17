@@ -128,20 +128,35 @@ function renderChart(days, range, pricing = []) {
   $('#daily-range').textContent = `${range.start} — ${range.end}`;
   const dense = days.length > 14;
   const labelStep = days.length > 60 ? 7 : days.length > 30 ? 4 : days.length > 14 ? 2 : 1;
+  const tips = [];
   const bars = days.map((day, index) => {
     const rows = day.series.filter((row) => value(row) > 0);
      const apiRows = day.series.filter((row) => row.api_cost != null), apiTotal = apiRows.reduce((sum, row) => sum + Number(row.api_cost), 0);
      const tokenTotal = day.series.reduce((sum, row) => sum + Number(row.total || 0), 0);
-     const tip = rows.map((row) => `${row.model}: ${formatted(value(row))}`).join('\n') || 'Aucune activité';
+     const tipText = rows.map((row) => `${row.model}: ${formatted(value(row))}`).join('\n') || 'Aucune activité';
+     const tipRows = rows.map((row) => `<span class="tip-row"><i class="dot" style="background:${colorFor(row)}"></i><label>${escape(row.model || row.label)}</label><small>${escape(formatted(value(row)))}</small></span>`).join('') || '<span class="muted">Aucune activité</span>';
+     const tipFoot = `${isTokens && tokenTotal ? `<span class="tip-foot">Total : ${escape(compact.format(tokenTotal))}</span>` : ''}${isTokens && apiRows.length ? `<span class="tip-foot">Estimation API : ${escape(money.format(apiTotal))}</span>` : ''}`;
+     tips.push(`<b class="tip-day">${escape(day.day)}</b>${tipRows}${tipFoot}`);
      const height = totals[index] / max * 100, showLabel = index % labelStep === 0 || index === days.length - 1;
      const showValueLabel = days.length <= 31 || index % 2 === 0 || index === days.length - 1;
      const label = granularity === 'month' ? day.day : day.day.slice(5);
       const apiLabel = isTokens && apiRows.length && showValueLabel && (!dense || totals[index] > max * 0.03) ? shortMoney(apiTotal) : '';
      const tokenLabel = !isTokens && tokenTotal && showValueLabel ? compact.format(tokenTotal) : '';
       const topLabel = apiLabel || tokenLabel;
-      return `<div class="bar${rows.length ? '' : ' empty'}" style="--bar-height:${height}%" title="${escape(`${day.day}\n${tip}${isTokens && tokenTotal ? `\nTotal : ${compact.format(tokenTotal)}` : ''}${isTokens && apiRows.length ? `\nEstimation API : ${money.format(apiTotal)}` : ''}`)}">${topLabel ? `<b class="bar-api">${topLabel}</b>` : ''}${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}<span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
+      return `<div class="bar${rows.length ? '' : ' empty'}" style="--bar-height:${height}%" aria-label="${escape(`${day.day}\n${tipText}`)}" data-bar="${index}">${topLabel ? `<b class="bar-api">${topLabel}</b>` : ''}${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}<span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
   }).join('');
   $('#chart').innerHTML = `<div class="chart-axis">${ticks.map((tick) => `<span>${isTokens ? compact.format(tick) : money.format(tick)}</span>`).join('')}</div><div class="chart-plot${dense ? ' dense' : ''}"><div class="chart-grid">${ticks.map(() => '<i></i>').join('')}</div><div class="chart-bars${dense ? ' dense' : ''}">${bars}</div></div>`;
+  const tooltip = $('#tooltip');
+  const moveTip = (event) => {
+    const pad = 14, rect = tooltip.getBoundingClientRect();
+    tooltip.style.left = `${Math.min(event.clientX + pad, window.innerWidth - rect.width - 8)}px`;
+    tooltip.style.top = `${Math.min(event.clientY + pad, window.innerHeight - rect.height - 8)}px`;
+  };
+  $('#chart').querySelectorAll('.bar').forEach((bar) => {
+    bar.addEventListener('mouseenter', (event) => { tooltip.innerHTML = tips[Number(bar.dataset.bar)]; tooltip.hidden = false; moveTip(event); });
+    bar.addEventListener('mousemove', moveTip);
+    bar.addEventListener('mouseleave', () => { tooltip.hidden = true; });
+  });
 }
 function renderSessions(rows) {
   const field = $('#cost-mode').value === 'api_cost' ? 'api_estimated_cost_usd' : 'out_of_pocket_cost_usd';
