@@ -184,20 +184,45 @@ const resetLabel = (iso) => {
   return date.toDateString() === now.toDateString() ? `reset ${time}` : `reset ${date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} ${time}`;
 };
 const LIMIT_ALERT = 20; // seuil fixe : bandeau rouge + ligne pointillée sous ce % restant
+const HISTORY_MIN_POINTS = 4; // en dessous : message d'attente plutôt qu'un faux plat
 let limitsHistory = null;
-const historyPath = (points, key) => {
-  const usable = points.map((point, index) => ({ index, value: point[key] })).filter((point) => Number.isFinite(point.value));
-  if (usable.length < 2) return '';
-  const last = Math.max(points.length - 1, 1);
-  return usable.map((point) => `${point === usable[0] ? 'M' : 'L'}${(point.index / last * 300).toFixed(1)},${(62 - Math.min(100, Math.max(0, point.value)) / 100 * 58).toFixed(1)}`).join('');
-};
+function historyScale(points) {
+  const values = points.flatMap((point) => [point.p, point.s]).filter(Number.isFinite);
+  if (!values.length) return null;
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (hi - lo < 10) { const mid = (hi + lo) / 2; lo = mid - 5; hi = mid + 5; }
+  const pad = (hi - lo) * 0.15;
+  return { lo: Math.max(0, lo - pad), hi: Math.min(100, hi + pad) };
+}
 function paintHistory() {
   let el = $('#limit-history');
-  if (!limitsHistory?.points || limitsHistory.points.length < 2) { el?.remove(); return; }
+  const points = limitsHistory?.points || [];
+  if (points.length < HISTORY_MIN_POINTS) { if (el) el.innerHTML = '<span class="muted limit-history-label">Historique en cours de constitution…</span>'; return; }
+  const scale = historyScale(points);
+  if (!scale) { el?.remove(); return; }
   if (!el && $('#limits .limit-grid')) { el = document.createElement('div'); el.className = 'limit-history'; el.id = 'limit-history'; $('#limits').appendChild(el); }
   if (!el) return;
-  const yAlert = (62 - LIMIT_ALERT / 100 * 58).toFixed(1);
-  el.innerHTML = `<svg class="limit-spark" viewBox="0 0 300 64" preserveAspectRatio="none" data-tip="Historique 7 jours du % restant (trait plein : 5 heures, pointillés : hebdo)"><line x1="0" y1="${yAlert}" x2="300" y2="${yAlert}" class="limit-threshold"/><path d="${historyPath(limitsHistory.points, 'p')}" class="spark-primary"/><path d="${historyPath(limitsHistory.points, 's')}" class="spark-secondary"/></svg><span class="muted limit-history-label">7 derniers jours · % restants</span>`;
+  const W = 300, H = 110, L = 30, T = 4, B = 14, plotW = W - L, plotH = H - T - B;
+  const x = (i) => (L + i / Math.max(points.length - 1, 1) * plotW).toFixed(1);
+  const y = (v) => (T + (1 - (Math.min(100, Math.max(0, v)) - scale.lo) / (scale.hi - scale.lo)) * plotH).toFixed(1);
+  const path = (key) => {
+    const usable = points.map((point, i) => ({ i, v: point[key] })).filter((point) => Number.isFinite(point.v));
+    if (usable.length < 2) return '';
+    return usable.map((point) => `${point === usable[0] ? 'M' : 'L'}${x(point.i)},${y(point.v)}`).join('');
+  };
+  const dots = (key, cls) => points.map((point, i) => Number.isFinite(point[key]) ? `<circle cx="${x(i)}" cy="${y(point[key])}" r="2" class="${cls}"/>` : '').join('');
+  const alert = LIMIT_ALERT >= scale.lo && LIMIT_ALERT <= scale.hi
+    ? `<line x1="${L}" y1="${y(LIMIT_ALERT)}" x2="${W}" y2="${y(LIMIT_ALERT)}" class="limit-threshold"/><text x="${W}" y="${(Number(y(LIMIT_ALERT)) - 3).toFixed(1)}" class="spark-label spark-alert" text-anchor="end">${LIMIT_ALERT} %</text>` : '';
+  const day = (t) => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  el.innerHTML = `<div class="spark-legend"><span class="spark-key solid">5 heures</span><span class="spark-key dashed">Hebdo</span></div>`
+    + `<svg class="limit-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" data-tip="Historique 7 jours du % restant">`
+    + `<text x="${L - 4}" y="${T + 8}" class="spark-label" text-anchor="end">${Math.round(scale.hi)} %</text>`
+    + `<text x="${L - 4}" y="${T + plotH}" class="spark-label" text-anchor="end">${Math.round(scale.lo)} %</text>`
+    + `<text x="${L}" y="${H - 2}" class="spark-label">${escape(day(points[0].t))}</text>`
+    + `<text x="${W}" y="${H - 2}" class="spark-label" text-anchor="end">${escape(day(points[points.length - 1].t))}</text>`
+    + alert
+    + `<path d="${path('p')}" class="spark-primary"/>${dots('p', 'spark-dot-primary')}`
+    + `<path d="${path('s')}" class="spark-secondary"/>${dots('s', 'spark-dot-secondary')}</svg>`;
 }
 let historyAt = 0;
 async function loadHistory(force = false) {

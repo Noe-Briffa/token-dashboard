@@ -180,10 +180,18 @@ input::placeholder { color: var(--ink-muted); }
 .limit.low .limit-head span { color: var(--coral); font-weight: 700; }
 .limit-alert { color: var(--coral); font-size: 12px; }
 .limit-history { margin-top: 10px; }
-.limit-spark { display: block; width: 100%; height: 64px; }
+.limit-spark { display: block; width: 100%; height: 110px; }
+.limit-spark path, .limit-spark line { vector-effect: non-scaling-stroke; }
 .limit-spark .spark-primary { fill: none; stroke: var(--accent); stroke-width: 2; }
 .limit-spark .spark-secondary { fill: none; stroke: var(--ink-muted); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .limit-spark .limit-threshold { stroke: var(--coral); stroke-width: 1; stroke-dasharray: 3 3; }
+.limit-spark .spark-label { fill: var(--ink-muted); font-size: 9px; }
+.limit-spark .spark-alert { fill: var(--coral); }
+.limit-spark .spark-dot-primary { fill: var(--accent); }
+.limit-spark .spark-dot-secondary { fill: var(--ink-muted); }
+.spark-legend { display: flex; gap: 14px; margin-bottom: 4px; color: var(--ink-muted); font-size: 11px; }
+.spark-key::before { content: ''; display: inline-block; width: 18px; margin-right: 6px; border-top: 2px solid var(--accent); vertical-align: middle; }
+.spark-key.dashed::before { border-top-style: dashed; border-color: var(--ink-muted); }
 .limit-history-label { font-size: 11px; }
 #limits-retry { padding: 4px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; font-size: 11px; font-weight: 700; }
 #limits-retry:hover { background: var(--accent-soft); border-color: var(--accent); }
