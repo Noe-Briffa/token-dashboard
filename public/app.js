@@ -213,19 +213,23 @@ function paintHistory() {
     if (usable.length < 2) return '';
     return usable.map((point) => `${point === usable[0] ? 'M' : 'L'}${x(point.i)},${y(point.v)}`).join('');
   };
-  const dots = (key, cls) => points.map((point, i) => Number.isFinite(point[key]) ? `<circle cx="${x(i)}" cy="${y(point[key])}" r="2.5" class="${cls}"/>` : '').join('');
+  const series = (key) => points.map((point, i) => ({ i, v: point[key] })).filter((point) => Number.isFinite(point.v));
+  const primary = series('p'), lastPoint = primary[primary.length - 1];
+  const d = path('p'), area = d ? `${d}L${x(points.length - 1)},${H}L0,${H}Z` : '';
+  const marker = lastPoint ? `<i class="spark-marker" data-tip="Actuel : ${Math.round(lastPoint.v)} % restants" style="left:${(lastPoint.i / Math.max(points.length - 1, 1) * 100).toFixed(2)}%;top:${y(lastPoint.v)}px"></i>` : '';
   const spanMs = Date.parse(points[points.length - 1].t) - Date.parse(points[0].t);
   const byHour = spanMs < 24 * 3600000;
-  const fmtX = (t) => byHour ? new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-  const caption = byHour ? `dernières ${Math.max(1, Math.round(spanMs / 3600000))} h · % restants` : '7 derniers jours · % restants';
+  const fmtX = (t) => byHour ? new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }).replace(':', 'h') : new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const caption = byHour ? `dernières ${Math.max(1, Math.round(spanMs / 3600000))} h` : '7 derniers jours';
   const inAlert = LIMIT_ALERT >= scale.lo && LIMIT_ALERT <= scale.hi;
   const alertLine = inAlert ? `<line x1="0" y1="${y(LIMIT_ALERT)}" x2="${W}" y2="${y(LIMIT_ALERT)}" class="limit-threshold"/>` : '';
   const alertChip = inAlert ? `<span class="spark-threshold-chip" style="top:${y(LIMIT_ALERT)}px">${LIMIT_ALERT} %</span>` : '';
-  el.innerHTML = `<div class="spark-legend"><span class="spark-key solid">5 heures</span><span class="spark-key dashed">Hebdo</span></div>`
+  el.innerHTML = `<div class="spark-head"><div class="spark-legend"><span class="spark-key solid">5 heures</span><span class="spark-key dashed">Hebdo</span></div><span class="muted">${escape(caption)} · % restants</span></div>`
     + `<div class="spark-wrap"><span class="spark-y spark-y-hi">${Math.round(scale.hi)} %</span><span class="spark-y spark-y-lo">${Math.round(scale.lo)} %</span>`
-    + `<svg class="limit-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${path('p')}" class="spark-primary"/>${dots('p', 'spark-dot-primary')}<path d="${path('s')}" class="spark-secondary"/>${dots('s', 'spark-dot-secondary')}${alertLine}</svg>`
-    + alertChip + `</div>`
-    + `<div class="spark-x"><span>${escape(fmtX(points[0].t))}</span><span class="muted">${escape(caption)}</span><span>${escape(fmtX(points[points.length - 1].t))}</span></div>`;
+    + `<div class="spark-plot"><i class="spark-grid" style="top:${T}px"></i><i class="spark-grid" style="bottom:${H - T - plotH}px"></i>`
+    + `<svg class="limit-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0"/><stop offset="1"/></linearGradient></defs>${area ? `<path d="${area}" class="spark-area"/>` : ''}<path d="${path('s')}" class="spark-secondary"/><path d="${d}" class="spark-primary"/>${alertLine}</svg>`
+    + marker + alertChip + `</div></div>`
+    + `<div class="spark-x"><span>${escape(fmtX(points[0].t))}</span><span>${escape(fmtX(points[points.length - 1].t))}</span></div>`;
 }
 let historyAt = 0;
 async function loadHistory(force = false) {
@@ -251,7 +255,7 @@ function renderLimits(limits) {
   const title = `Limites Codex${limits.plan ? ` · ${escape(limits.plan)}` : ''}`;
   const alert = [['5 heures', limits.primary], ['Hebdo', limits.secondary]].filter(([, window]) => low(window)).map(([label]) => label).join(' et ');
   const badge = alert ? `<b class="limit-alert">⚠ ${escape(alert)} sous les ${LIMIT_ALERT} %</b>` : '';
-  const toggle = `<button id="limits-history-toggle" aria-pressed="${showHistory}">${showHistory ? 'Masquer le graphique' : 'Afficher le graphique'}</button>`;
+  const toggle = `<button id="limits-history-toggle" class="head-toggle" aria-pressed="${showHistory}">${showHistory ? 'Masquer le graphique' : 'Afficher le graphique'}</button>`;
   const grid = `<div class="limit-grid">${bar('5 heures', limits.primary, limits.status !== 'connected')}${bar('Hebdo', limits.secondary, limits.status !== 'connected')}</div>${showHistory ? '<div class="limit-history" id="limit-history"></div>' : ''}`;
   if (limits.status === 'connected') el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span>${badge || 'temps réel'}</span>${toggle}</div>${grid}`;
   else if (limits.primary || limits.secondary) el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span class="muted">${badge ? `${badge} ` : ''}${escape(note)} · ${escape(ageLabel(limits.fetchedAt))}</span><span class="limit-actions"><button id="limits-retry">Réessayer</button>${toggle}</span></div>${grid}`;
