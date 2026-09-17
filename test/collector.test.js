@@ -46,8 +46,8 @@ test('stored price changes computed cost without changing session data', () => {
   const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
   importSessions(db, [{ platform: 'codex', agent: 'Codex CLI', id: 'cost-1', sourcePath: 'session', model: 'gpt-test', input: 100, cached: 50, output: 20, reasoning: 10, total: 130 }]);
   const query = `SELECT CASE WHEN p.model IS NOT NULL THEN (s.input_tokens*p.input_usd_per_million+s.cached_input_tokens*p.cached_input_usd_per_million+s.output_tokens*p.output_usd_per_million+s.reasoning_tokens*p.reasoning_usd_per_million)/1000000.0 END cost FROM sessions s LEFT JOIN model_pricing p ON p.platform=s.platform AND p.model=s.model WHERE s.id='cost-1'`;
-  assert.equal(db.prepare(query).get().cost, null);
-  const price = db.prepare('INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  assert.equal(db.prepare(query).get().cost, 0); // auto-ligne prix à 0 jusqu'à saisie
+  const price = db.prepare("INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(platform, model) DO UPDATE SET input_usd_per_million=excluded.input_usd_per_million, cached_input_usd_per_million=excluded.cached_input_usd_per_million, output_usd_per_million=excluded.output_usd_per_million, reasoning_usd_per_million=excluded.reasoning_usd_per_million, updated_at=excluded.updated_at");
   price.run('codex', 'gpt-test', 1, 0.5, 2, 2, 'now'); assert.equal(db.prepare(query).get().cost, 0.000185);
   db.prepare('UPDATE model_pricing SET output_usd_per_million=4').run(); assert.equal(db.prepare(query).get().cost, 0.000225);
   assert.equal(db.prepare("SELECT total_tokens FROM sessions WHERE id='cost-1'").get().total_tokens, 130);
@@ -89,4 +89,16 @@ test('normalizes Codex rate limits to remaining percent with reset time', async 
   const missing = await collectCodexLimits({ authFile: path.join(directory, 'nope.json'), cacheMs: 0, fetchImpl });
   assert.equal(missing.status, 'not_connected');
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('auto-adds missing models to pricing without duplicates', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const session = (id, platform, model) => ({ platform, agent: 'Test', id, sourcePath: id, model, input: 10, cached: 0, output: 5, reasoning: 0, total: 15 });
+  importSessions(db, [session('a', 'codex', 'gpt-new'), session('b', 'opencode', 'gpt-new'), session('c', 'codex', null)]);
+  const rows = db.prepare("SELECT platform, model, input_usd_per_million FROM model_pricing WHERE model='gpt-new' ORDER BY platform").all();
+  assert.deepEqual(rows.map((r) => r.platform), ['codex', 'opencode']);
+  assert.ok(rows.every((r) => r.input_usd_per_million === 0));
+  importSessions(db, [session('a', 'codex', 'gpt-new')]);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM model_pricing WHERE model='gpt-new'").get().n, 2);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });

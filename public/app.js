@@ -109,10 +109,14 @@ function groupChartDays(days, granularity) {
   }
   return [...grouped.values()].map((day) => ({ ...day, series: mergeByModel(day.series) }));
 }
-function renderChart(days, range) {
+function renderChart(days, range, pricing = []) {
   const granularity = $('#chart-granularity').value;
   days = groupChartDays(days, granularity);
   const isTokens = $('#metric').value === 'total';
+  // bougies tokens : moins chers en bas (column-reverse => premier segment en bas)
+  const inputPrice = new Map(pricing.map((row) => [row.model, Number(row.input_usd_per_million) || 0]));
+  const priceOf = (row) => inputPrice.get(row.model || row.label) ?? 0;
+  if (isTokens) days = days.map((day) => ({ ...day, series: [...day.series].sort((a, b) => priceOf(a) - priceOf(b)) }));
   const totals = days.map((day) => day.series.reduce((sum, row) => sum + value(row), 0));
   const rawMax = Math.max(...totals, 0), magnitude = 10 ** Math.floor(Math.log10(rawMax || 1));
   const max = Math.ceil(rawMax / magnitude * 4) / 4 * magnitude || 1;
@@ -188,7 +192,7 @@ function render(data) {
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#subscription').checked = data.settings.openai_subscription;
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderChart(daily, data.range); renderSessions(data.sessions); renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderChart(daily, data.range, data.pricing); renderSessions(data.sessions); renderPricing(data.pricing); renderSources(data.sources);
 }
 async function load(refresh = false) {
   if (refresh) await fetch('/api/refresh', { method: 'POST' });

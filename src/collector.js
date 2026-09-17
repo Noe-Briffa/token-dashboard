@@ -148,10 +148,15 @@ export function importSessions(db, sessions) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   let imported = 0;
+  const seen = new Set();
+  const ensurePricing = db.prepare("INSERT OR IGNORE INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, pricing_unit, updated_at) VALUES (?, ?, 0, 0, 0, 0, 'per_1M_tokens', datetime('now'))");
   for (const raw of sessions) {
     const item = normalizeSession(raw);
     upsert.run(item.id, item.platform, item.provider, item.agent, item.sourcePath, item.project, item.model, item.startedAt, item.endedAt, item.durationSeconds, item.input, item.cached, item.output, item.reasoning, item.total, item.reportedCost, new Date().toISOString());
     imported++;
+    // nouveau modèle utilisé => ligne prix à saisir, jamais de doublon (INSERT OR IGNORE)
+    const key = `${item.platform}__${item.model}`;
+    if (item.model && !seen.has(key)) { seen.add(key); ensurePricing.run(item.platform, item.model); }
   }
   return imported;
 }
