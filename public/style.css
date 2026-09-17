@@ -202,7 +202,7 @@ input::placeholder { color: var(--ink-muted); }
 
 .chart { display: grid; grid-template-columns: 52px minmax(0, 1fr); height: 210px; }
 .chart-axis { display: flex; flex-direction: column; justify-content: space-between; height: 170px; padding: 24px 10px 21px 0; color: var(--ink-muted); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
-.chart-plot { position: relative; height: 170px; overflow: hidden; border-bottom: 1px solid var(--line-strong); }
+.chart-plot { position: relative; height: 170px; overflow: visible; border-bottom: 1px solid var(--line-strong); }
 .chart-plot.dense { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .chart-grid { position: absolute; inset: 24px 0 20px; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
 .chart-grid i { display: block; border-top: 1px solid color-mix(in oklch, var(--line) 70%, transparent); }
@@ -210,8 +210,6 @@ input::placeholder { color: var(--ink-muted); }
 .chart-bars.dense { min-width: 100%; }
 .bar { position: relative; display: flex; flex: 1 1 0; flex-direction: column-reverse; align-items: stretch; justify-content: flex-start; min-width: 0; height: 100%; }
 .bar-api { position: absolute; top: -18px; left: 50%; z-index: 2; overflow: hidden; width: max-content; max-width: 110px; padding: 1px 4px; color: var(--ink-muted); background: color-mix(in oklch, var(--surface) 88%, transparent); border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 1.15; transform: translateX(-50%); white-space: nowrap; }
-.bar-api.edge-start { left: 0; transform: none; }
-.bar-api.edge-end { left: 100%; transform: translateX(-100%); }
 .bar-segment { display: block; flex: 0 0 auto; width: 100%; min-height: 1px; border-radius: 0; opacity: .9; }
 /* hauteur mini = rayon visible même sur un filet */
 .bar-segment:last-of-type { min-height: 4px; border-radius: 4px 4px 0 0; }
