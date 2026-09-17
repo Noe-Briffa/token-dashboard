@@ -31,11 +31,15 @@ Pas d'installation de dépendances, le projet utilise seulement le serveur HTTP 
 
 Tokens par jour, semaine ou mois, répartition par modèle et par plateforme, sessions détaillées, coûts estimés via les tarifs que tu saisis dans "Prix des modèles". Les périodes 14, 30, 90, 180 et 365 jours sont disponibles, plus une période personnalisée. Le thème suit le système par défaut, avec un choix clair ou sombre dans l'en-tête.
 
+Un bandeau affiche tes limites Codex en temps réel : fenêtre 5 heures et fenêtre hebdo, en pourcent restant avec l'heure de reset. Il se rafraîchit toutes les 15 secondes et quand tu reviens sur l'onglet.
+
 `npm run collect` fait un import sans lancer le dashboard.
 
 ## Données
 
 Codex est lu depuis `~/.codex/sessions`. OpenCode est lu depuis `~/.local/share/opencode/opencode.db` quand le fichier existe, sinon la source s'affiche comme non connectée et le reste continue de marcher.
+
+Les limites Codex viennent de ta session ChatGPT locale (`~/.codex/auth.json`), lue via le backend OpenAI. Ton token ne quitte jamais la machine autrement que pour cette requête, et il n'est jamais écrit dans les logs. Si la session a expiré, le bandeau l'indique, relance Codex pour la renouveler.
 
 La base locale vit dans `data/usage.sqlite` (ignorée par git). Les tarifs saisis dans le dashboard sont conservés dedans. Pour repartir de zéro, arrête l'app et supprime ce fichier, il sera recréé au prochain lancement.
 
