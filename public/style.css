@@ -115,6 +115,11 @@ button[type="submit"] { min-height: 38px; padding-inline: 16px; border-radius: 9
 button[type="submit"]:active { transform: translateY(0); box-shadow: none; }
 header button { color: var(--ink); background: var(--surface); border-color: var(--line-strong); }
 header button:hover { color: var(--ink); background: var(--accent-soft); border-color: var(--accent); }
+#update { color: #fff; background: oklch(55% 0.18 250); border-color: oklch(55% 0.18 250); animation: update-pulse 1.6s ease-in-out infinite; }
+#update:hover { color: #fff; background: oklch(62% 0.17 250); border-color: oklch(62% 0.17 250); }
+#update:disabled { opacity: .7; animation: none; cursor: wait; }
+@keyframes update-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in oklch, oklch(55% 0.18 250) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { #update { animation: none; } }
 
 .toolbar { padding: 16px; background: var(--surface-muted); }
 .toolbar-head, .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

@@ -246,12 +246,31 @@ const normalizeRate = (input) => {
 };
 $('#pricing-rows').addEventListener('focusout', (event) => { if (event.target.matches('.rate')) normalizeRate(event.target); });
 $('#pricing').addEventListener('submit', async (event) => { event.preventDefault(); const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) })); const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) }); if (!response.ok) { alert((await response.json()).error); return; } await load(); });
-let assetStamp = 0;
+let assetStamp = 0, localCommit = null;
 async function checkVersion() {
   try {
-    const stamp = (await (await fetch('/api/version')).json()).stamp;
-    if (!assetStamp) assetStamp = stamp;
-    else if (stamp !== assetStamp) location.reload();
+    const info = await (await fetch('/api/version')).json();
+    localCommit = info.commit || null;
+    if (!assetStamp) assetStamp = info.stamp;
+    else if (info.stamp !== assetStamp) location.reload();
   } catch { /* garde la page telle quelle */ }
 }
-setPeriod(); watchTips(); load(); loadLimits(true); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
+async function checkUpdate() {
+  if (!localCommit) return;
+  try {
+    const remote = (await (await fetch('https://api.github.com/Noe-Briffa/token-dashboard/commits/main')).json()).sha;
+    $('#update').hidden = !remote || remote === localCommit;
+  } catch { /* garde l'état actuel du bouton */ }
+}
+$('#update').onclick = async () => {
+  if (!confirm('Télécharger et installer la nouvelle version du dashboard ?')) return;
+  const button = $('#update');
+  button.disabled = true; button.textContent = 'Mise à jour…';
+  try {
+    const response = await fetch('/api/update', { method: 'POST' });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Mise à jour impossible');
+    location.reload();
+  } catch (error) { alert(error.message); button.disabled = false; button.textContent = '↓ Nouvelle version'; }
+};
+setPeriod(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);

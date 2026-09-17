@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { collectCodex, collectCodexLimits, collectOpenCode, openDatabase } from './collector.js';
 
@@ -79,6 +80,15 @@ function savePricing(body) {
   }
   return { saved: body.pricing.length };
 }
+let localCommit = null;
+try { localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 10000 }).toString().trim() || null; } catch { /* pas un clone git, maj auto désactivée */ }
+function pullUpdate() {
+  try {
+    const output = execFileSync('git', ['pull', '--ff-only'], { cwd: root, timeout: 120000 }).toString();
+    try { localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 10000 }).toString().trim() || null; } catch {}
+    return { updated: true, output: output.trim().slice(-500) };
+  } catch (error) { throw new Error((error.stderr?.toString().trim() || error.message).slice(-300) || 'git pull impossible'); }
+}
 function sendJson(res, payload, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(payload)); }
 function sendFile(res, file) { if (!fs.existsSync(file)) { res.writeHead(404); res.end('Not found'); return; } const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html'; res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store' }); fs.createReadStream(file).pipe(res); }
 function readBody(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', (chunk) => raw += chunk); req.on('end', () => { try { resolve(JSON.parse(raw || '{}')); } catch { reject(new Error('JSON invalide')); } }); req.on('error', reject); }); }
@@ -93,7 +103,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/pricing') return sendJson(res, savePricing(await readBody(req)));
     if (url.pathname === '/api/data') return sendJson(res, data(url.searchParams));
     if (url.pathname === '/api/limits') return sendJson(res, await collectCodexLimits());
-    if (url.pathname === '/api/version') return sendJson(res, { stamp: Math.max(...['index.html', 'app.js', 'style.css'].map((f) => fs.statSync(path.join(publicDir, f)).mtimeMs)) });
+    if (url.pathname === '/api/version') return sendJson(res, { stamp: Math.max(...['index.html', 'app.js', 'style.css'].map((f) => fs.statSync(path.join(publicDir, f)).mtimeMs)), commit: localCommit });
+    if (req.method === 'POST' && url.pathname === '/api/update') return sendJson(res, pullUpdate());
     if (url.pathname === '/') return sendFile(res, path.join(publicDir, 'index.html'));
     if (url.pathname === '/app.js') return sendFile(res, path.join(publicDir, 'app.js'));
     if (url.pathname === '/style.css') return sendFile(res, path.join(publicDir, 'style.css'));
