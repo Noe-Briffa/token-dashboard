@@ -185,7 +185,9 @@ const resetLabel = (iso) => {
 };
 const LIMIT_ALERT = 20; // seuil fixe : bandeau rouge + ligne pointillée sous ce % restant
 const HISTORY_MIN_POINTS = 4; // en dessous : message d'attente plutôt qu'un faux plat
-let limitsHistory = null;
+const readHistoryPref = () => { try { return localStorage.getItem('usage-monitor-history') !== 'hidden'; } catch { return true; } };
+const saveHistoryPref = (shown) => { try { localStorage.setItem('usage-monitor-history', shown ? 'shown' : 'hidden'); } catch { /* préférence session uniquement */ } };
+let limitsHistory = null, lastLimits = null;
 function historyScale(points) {
   const values = points.flatMap((point) => [point.p, point.s]).filter(Number.isFinite);
   if (!values.length) return null;
@@ -195,6 +197,7 @@ function historyScale(points) {
   return { lo: Math.max(0, lo - pad), hi: Math.min(100, hi + pad) };
 }
 function paintHistory() {
+  if (!readHistoryPref()) return;
   let el = $('#limit-history');
   const points = limitsHistory?.points || [];
   if (points.length < HISTORY_MIN_POINTS) { if (el) el.innerHTML = '<span class="muted limit-history-label">Historique en cours de constitution…</span>'; return; }
@@ -202,30 +205,31 @@ function paintHistory() {
   if (!scale) { el?.remove(); return; }
   if (!el && $('#limits .limit-grid')) { el = document.createElement('div'); el.className = 'limit-history'; el.id = 'limit-history'; $('#limits').appendChild(el); }
   if (!el) return;
-  const W = 300, H = 110, L = 30, T = 4, B = 14, plotW = W - L, plotH = H - T - B;
-  const x = (i) => (L + i / Math.max(points.length - 1, 1) * plotW).toFixed(1);
+  const W = 300, H = 110, T = 4, plotH = H - T - 4; // SVG = traits seuls, tous les textes sont en HTML (non déformés)
+  const x = (i) => (i / Math.max(points.length - 1, 1) * W).toFixed(1);
   const y = (v) => (T + (1 - (Math.min(100, Math.max(0, v)) - scale.lo) / (scale.hi - scale.lo)) * plotH).toFixed(1);
   const path = (key) => {
     const usable = points.map((point, i) => ({ i, v: point[key] })).filter((point) => Number.isFinite(point.v));
     if (usable.length < 2) return '';
     return usable.map((point) => `${point === usable[0] ? 'M' : 'L'}${x(point.i)},${y(point.v)}`).join('');
   };
-  const dots = (key, cls) => points.map((point, i) => Number.isFinite(point[key]) ? `<circle cx="${x(i)}" cy="${y(point[key])}" r="2" class="${cls}"/>` : '').join('');
-  const alert = LIMIT_ALERT >= scale.lo && LIMIT_ALERT <= scale.hi
-    ? `<line x1="${L}" y1="${y(LIMIT_ALERT)}" x2="${W}" y2="${y(LIMIT_ALERT)}" class="limit-threshold"/><text x="${W}" y="${(Number(y(LIMIT_ALERT)) - 3).toFixed(1)}" class="spark-label spark-alert" text-anchor="end">${LIMIT_ALERT} %</text>` : '';
-  const day = (t) => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const dots = (key, cls) => points.map((point, i) => Number.isFinite(point[key]) ? `<circle cx="${x(i)}" cy="${y(point[key])}" r="2.5" class="${cls}"/>` : '').join('');
+  const spanMs = Date.parse(points[points.length - 1].t) - Date.parse(points[0].t);
+  const byHour = spanMs < 24 * 3600000;
+  const fmtX = (t) => byHour ? new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const caption = byHour ? `dernières ${Math.max(1, Math.round(spanMs / 3600000))} h · % restants` : '7 derniers jours · % restants';
+  const inAlert = LIMIT_ALERT >= scale.lo && LIMIT_ALERT <= scale.hi;
+  const alertLine = inAlert ? `<line x1="0" y1="${y(LIMIT_ALERT)}" x2="${W}" y2="${y(LIMIT_ALERT)}" class="limit-threshold"/>` : '';
+  const alertChip = inAlert ? `<span class="spark-threshold-chip" style="top:${y(LIMIT_ALERT)}px">${LIMIT_ALERT} %</span>` : '';
   el.innerHTML = `<div class="spark-legend"><span class="spark-key solid">5 heures</span><span class="spark-key dashed">Hebdo</span></div>`
-    + `<svg class="limit-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" data-tip="Historique 7 jours du % restant">`
-    + `<text x="${L - 4}" y="${T + 8}" class="spark-label" text-anchor="end">${Math.round(scale.hi)} %</text>`
-    + `<text x="${L - 4}" y="${T + plotH}" class="spark-label" text-anchor="end">${Math.round(scale.lo)} %</text>`
-    + `<text x="${L}" y="${H - 2}" class="spark-label">${escape(day(points[0].t))}</text>`
-    + `<text x="${W}" y="${H - 2}" class="spark-label" text-anchor="end">${escape(day(points[points.length - 1].t))}</text>`
-    + alert
-    + `<path d="${path('p')}" class="spark-primary"/>${dots('p', 'spark-dot-primary')}`
-    + `<path d="${path('s')}" class="spark-secondary"/>${dots('s', 'spark-dot-secondary')}</svg>`;
+    + `<div class="spark-wrap"><span class="spark-y spark-y-hi">${Math.round(scale.hi)} %</span><span class="spark-y spark-y-lo">${Math.round(scale.lo)} %</span>`
+    + `<svg class="limit-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${path('p')}" class="spark-primary"/>${dots('p', 'spark-dot-primary')}<path d="${path('s')}" class="spark-secondary"/>${dots('s', 'spark-dot-secondary')}${alertLine}</svg>`
+    + alertChip + `</div>`
+    + `<div class="spark-x"><span>${escape(fmtX(points[0].t))}</span><span class="muted">${escape(caption)}</span><span>${escape(fmtX(points[points.length - 1].t))}</span></div>`;
 }
 let historyAt = 0;
 async function loadHistory(force = false) {
+  if (!readHistoryPref()) return;
   if (!force && Date.now() - historyAt < 300000) return;
   try { limitsHistory = await (await fetch('/api/limits/history?days=7')).json(); historyAt = Date.now(); paintHistory(); } catch { /* courbe garde son état */ }
 }
@@ -236,7 +240,9 @@ const ageLabel = (iso) => {
   return minutes < 60 ? `il y a ${minutes} min` : `il y a ${Math.floor(minutes / 60)} h`;
 };
 function renderLimits(limits) {
+  lastLimits = limits;
   const el = $('#limits');
+  const showHistory = readHistoryPref();
   const low = (window) => window && Number.isFinite(window.remaining) && window.remaining < LIMIT_ALERT;
   const bar = (label, window, stale = false) => window
     ? `<div class="limit${stale ? ' stale' : ''}${low(window) ? ' low' : ''}"><div class="limit-head"><b>${label}</b><span>${Math.round(window.remaining)}% restants · ${resetLabel(window.resetsAt)}</span></div><div class="limit-track"><i style="width:${Math.min(100, Math.max(0, window.remaining))}%"></i></div></div>`
@@ -245,12 +251,15 @@ function renderLimits(limits) {
   const title = `Limites Codex${limits.plan ? ` · ${escape(limits.plan)}` : ''}`;
   const alert = [['5 heures', limits.primary], ['Hebdo', limits.secondary]].filter(([, window]) => low(window)).map(([label]) => label).join(' et ');
   const badge = alert ? `<b class="limit-alert">⚠ ${escape(alert)} sous les ${LIMIT_ALERT} %</b>` : '';
-  const grid = `<div class="limit-grid">${bar('5 heures', limits.primary, limits.status !== 'connected')}${bar('Hebdo', limits.secondary, limits.status !== 'connected')}</div><div class="limit-history" id="limit-history"></div>`;
-  if (limits.status === 'connected') el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span>${badge || 'temps réel'}</span></div>${grid}`;
-  else if (limits.primary || limits.secondary) el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span class="muted">${badge ? `${badge} ` : ''}${escape(note)} · ${escape(ageLabel(limits.fetchedAt))}</span><button id="limits-retry">Réessayer</button></div>${grid}`;
+  const toggle = `<button id="limits-history-toggle" aria-pressed="${showHistory}">${showHistory ? 'Masquer le graphique' : 'Afficher le graphique'}</button>`;
+  const grid = `<div class="limit-grid">${bar('5 heures', limits.primary, limits.status !== 'connected')}${bar('Hebdo', limits.secondary, limits.status !== 'connected')}</div>${showHistory ? '<div class="limit-history" id="limit-history"></div>' : ''}`;
+  if (limits.status === 'connected') el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span>${badge || 'temps réel'}</span>${toggle}</div>${grid}`;
+  else if (limits.primary || limits.secondary) el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span class="muted">${badge ? `${badge} ` : ''}${escape(note)} · ${escape(ageLabel(limits.fetchedAt))}</span><span class="limit-actions"><button id="limits-retry">Réessayer</button>${toggle}</span></div>${grid}`;
   else el.innerHTML = `<div class="panel-head"><h2>Limites Codex</h2><span class="muted">${escape(note)}</span><button id="limits-retry">Réessayer</button></div>`;
   const retry = $('#limits-retry');
   if (retry) retry.onclick = () => { loadLimits(true); loadHistory(true); };
+  const toggleBtn = $('#limits-history-toggle');
+  if (toggleBtn) toggleBtn.onclick = () => { saveHistoryPref(!readHistoryPref()); renderLimits(lastLimits); loadHistory(true); };
   paintHistory();
 }
 let limitsAt = 0;
