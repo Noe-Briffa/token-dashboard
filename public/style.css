@@ -232,6 +232,7 @@ input::placeholder { color: var(--ink-muted); }
   box-shadow: 0 8px 24px color-mix(in oklch, var(--ink) 14%, transparent);
   font-size: 12px;
   pointer-events: none;
+  white-space: pre-line;
   font-variant-numeric: tabular-nums;
 }
 #tooltip[hidden] { display: none; }

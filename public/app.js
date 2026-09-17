@@ -8,7 +8,29 @@ let platformColors = new Map();
 const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 const duration = (seconds) => seconds ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : '—';
-const metric = (label, value, note = '', title = '') => `<article class="metric"${title ? ` title="${escape(title)}"` : ''}><label>${label}</label><strong>${value}</strong>${note ? `<small class="muted">${note}</small>` : ''}</article>`;
+const metric = (label, value, note = '', title = '') => `<article class="metric"${title ? ` data-tip="${escape(title)}"` : ''}><label>${label}</label><strong>${value}</strong>${note ? `<small class="muted">${note}</small>` : ''}</article>`;
+let barTips = [];
+function watchTips() {
+  const tooltip = $('#tooltip');
+  const moveTip = (event) => {
+    const pad = 14, rect = tooltip.getBoundingClientRect();
+    tooltip.style.left = `${Math.max(8, Math.min(event.clientX + pad, window.innerWidth - rect.width - 8))}px`;
+    tooltip.style.top = `${Math.max(8, Math.min(event.clientY + pad, window.innerHeight - rect.height - 8))}px`;
+  };
+  document.addEventListener('mouseover', (event) => {
+    const bar = event.target.closest('[data-bar]');
+    const simple = event.target.closest('[data-tip]');
+    if (!bar && !simple) return;
+    if (bar) tooltip.innerHTML = barTips[Number(bar.dataset.bar)];
+    else tooltip.textContent = simple.dataset.tip;
+    tooltip.hidden = false;
+    moveTip(event);
+  });
+  document.addEventListener('mousemove', (event) => { if (!tooltip.hidden) moveTip(event); });
+  document.addEventListener('mouseout', (event) => {
+    if (!event.relatedTarget || !event.relatedTarget.closest?.('[data-bar],[data-tip]')) tooltip.hidden = true;
+  });
+}
 const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 const readTheme = () => {
   try { return ['light', 'dark', 'system'].includes(localStorage.getItem('usage-monitor-theme')) ? localStorage.getItem('usage-monitor-theme') : 'system'; } catch { return 'system'; }
@@ -81,9 +103,9 @@ function renderDonut(id, totalId, rows, target) {
   const legend = usable.map((row) => {
     const active = current && current === row.label;
     const title = active ? 'Cliquer pour afficher tous' : `Filtrer par ${row.label}`;
-     return `<button data-filter="${target}" data-value="${escape(row.label)}" class="${active ? 'active' : ''}" title="${escape(title)}"><i class="dot" style="background:${colorFor(row, target)}"></i><label>${escape(row.label)}</label><small>${formatted(value(row))}</small></button>`;
+      return `<button data-filter="${target}" data-value="${escape(row.label)}" class="${active ? 'active' : ''}" data-tip="${escape(title)}"><i class="dot" style="background:${colorFor(row, target)}"></i><label>${escape(row.label)}</label><small>${formatted(value(row))}</small></button>`;
   }).join('');
-  const clearHint = current && usable.length === 1 && usable[0].label === current ? `<button class="legend-clear" data-clear="${target}" title="Revenir à tous les ${target === 'model' ? 'modèles' : 'plateformes'}">↺ Tous</button>` : '';
+  const clearHint = current && usable.length === 1 && usable[0].label === current ? `<button class="legend-clear" data-clear="${target}" data-tip="Revenir à tous les ${target === 'model' ? 'modèles' : 'plateformes'}">↺ Tous</button>` : '';
   $(`#${id}`).innerHTML = `<svg class="donut" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="none" stroke="var(--line)" stroke-width="14"/>${arcs}<text x="50" y="48">${$('#metric').value === 'cost' ? 'COÛT' : 'TOKENS'}</text><text x="50" y="60">${escape(formatted(total))}</text></svg><div class="legend">${legend}${clearHint}</div>`;
   $(`#${id}`).querySelectorAll('button[data-filter]').forEach((button) => button.onclick = () => {
     const isActive = button.classList.contains('active');
@@ -128,7 +150,7 @@ function renderChart(days, range, pricing = []) {
   $('#daily-range').textContent = `${range.start} — ${range.end}`;
   const dense = days.length > 14;
   const labelStep = days.length > 60 ? 7 : days.length > 30 ? 4 : days.length > 14 ? 2 : 1;
-  const tips = [];
+  barTips = [];
   const bars = days.map((day, index) => {
     const rows = day.series.filter((row) => value(row) > 0);
      const apiRows = day.series.filter((row) => row.api_cost != null), apiTotal = apiRows.reduce((sum, row) => sum + Number(row.api_cost), 0);
@@ -136,7 +158,7 @@ function renderChart(days, range, pricing = []) {
      const tipText = rows.map((row) => `${row.model}: ${formatted(value(row))}`).join('\n') || 'Aucune activité';
      const tipRows = rows.map((row) => `<span class="tip-row"><i class="dot" style="background:${colorFor(row)}"></i><label>${escape(row.model || row.label)}</label><small>${escape(formatted(value(row)))}</small></span>`).join('') || '<span class="muted">Aucune activité</span>';
      const tipFoot = `${isTokens && tokenTotal ? `<span class="tip-foot">Total : ${escape(compact.format(tokenTotal))}</span>` : ''}${isTokens && apiRows.length ? `<span class="tip-foot">Estimation API : ${escape(money.format(apiTotal))}</span>` : ''}`;
-     tips.push(`<b class="tip-day">${escape(day.day)}</b>${tipRows}${tipFoot}`);
+     barTips.push(`<b class="tip-day">${escape(day.day)}</b>${tipRows}${tipFoot}`);
      const height = totals[index] / max * 100, showLabel = index % labelStep === 0 || index === days.length - 1;
      const showValueLabel = days.length <= 31 || index % 2 === 0 || index === days.length - 1;
      const label = granularity === 'month' ? day.day : day.day.slice(5);
@@ -146,22 +168,11 @@ function renderChart(days, range, pricing = []) {
       return `<div class="bar${rows.length ? '' : ' empty'}" style="--bar-height:${height}%" aria-label="${escape(`${day.day}\n${tipText}`)}" data-bar="${index}">${topLabel ? `<b class="bar-api">${topLabel}</b>` : ''}${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}<span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
   }).join('');
   $('#chart').innerHTML = `<div class="chart-axis">${ticks.map((tick) => `<span>${isTokens ? compact.format(tick) : money.format(tick)}</span>`).join('')}</div><div class="chart-plot${dense ? ' dense' : ''}"><div class="chart-grid">${ticks.map(() => '<i></i>').join('')}</div><div class="chart-bars${dense ? ' dense' : ''}">${bars}</div></div>`;
-  const tooltip = $('#tooltip');
-  const moveTip = (event) => {
-    const pad = 14, rect = tooltip.getBoundingClientRect();
-    tooltip.style.left = `${Math.min(event.clientX + pad, window.innerWidth - rect.width - 8)}px`;
-    tooltip.style.top = `${Math.min(event.clientY + pad, window.innerHeight - rect.height - 8)}px`;
-  };
-  $('#chart').querySelectorAll('.bar').forEach((bar) => {
-    bar.addEventListener('mouseenter', (event) => { tooltip.innerHTML = tips[Number(bar.dataset.bar)]; tooltip.hidden = false; moveTip(event); });
-    bar.addEventListener('mousemove', moveTip);
-    bar.addEventListener('mouseleave', () => { tooltip.hidden = true; });
-  });
 }
 function renderSessions(rows) {
   const field = $('#cost-mode').value === 'api_cost' ? 'api_estimated_cost_usd' : 'out_of_pocket_cost_usd';
   $('#session-count').textContent = `${number.format(rows.length)} affichées`;
-  $('#sessions').innerHTML = rows.map((row) => `<tr><td>${escape(row.id.slice(0, 8))}</td><td>${escape(row.platform)}<br><span class="muted">${escape(row.agent)}</span></td><td>${escape(row.model || 'Inconnu')}</td><td class="project" title="${escape(row.project || '')}">${escape(row.project || '—')}</td><td>${duration(row.duration_seconds)}</td><td>${number.format(row.input_tokens)}</td><td>${number.format(row.cached_input_tokens)}</td><td>${number.format(row.output_tokens + row.reasoning_tokens)}</td><td><b>${number.format(row.total_tokens)}</b></td><td>${row[field] == null ? '—' : money.format(row[field])}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">Aucune session.</td></tr>';
+  $('#sessions').innerHTML = rows.map((row) => `<tr><td>${escape(row.id.slice(0, 8))}</td><td>${escape(row.platform)}<br><span class="muted">${escape(row.agent)}</span></td><td>${escape(row.model || 'Inconnu')}</td><td class="project" data-tip="${escape(row.project || '')}">${escape(row.project || '—')}</td><td>${duration(row.duration_seconds)}</td><td>${number.format(row.input_tokens)}</td><td>${number.format(row.cached_input_tokens)}</td><td>${number.format(row.output_tokens + row.reasoning_tokens)}</td><td><b>${number.format(row.total_tokens)}</b></td><td>${row[field] == null ? '—' : money.format(row[field])}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">Aucune session.</td></tr>';
 }
 function renderPricing(rows) {
   $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td>${escape(row.platform)}</td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="number" min="0" step="any" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
@@ -238,4 +249,4 @@ async function checkVersion() {
     else if (stamp !== assetStamp) location.reload();
   } catch { /* garde la page telle quelle */ }
 }
-setPeriod(); load(); loadLimits(true); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
+setPeriod(); watchTips(); load(); loadLimits(true); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
