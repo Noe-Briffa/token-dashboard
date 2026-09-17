@@ -140,7 +140,7 @@ function renderChart(days, range, pricing = []) {
      const tokenLabel = !isTokens && tokenTotal && showValueLabel ? compact.format(tokenTotal) : '';
      const topLabel = apiLabel || tokenLabel;
      const edge = index === 0 ? ' edge-start' : index === days.length - 1 ? ' edge-end' : '';
-     return `<div class="bar${rows.length ? '' : ' empty'}" style="--bar-height:${height}%" title="${escape(`${day.day}\n${tip}${isTokens && apiRows.length ? `\nEstimation API : ${money.format(apiTotal)}` : ''}`)}">${topLabel ? `<b class="bar-api${edge}">${topLabel}</b>` : ''}${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}<span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
+      return `<div class="bar${rows.length ? '' : ' empty'}" style="--bar-height:${height}%" title="${escape(`${day.day}\n${tip}${isTokens && apiRows.length ? `\nEstimation API : ${money.format(apiTotal)}` : ''}`)}">${topLabel ? `<b class="bar-api${edge}">${topLabel}</b>` : ''}<div class="bar-stack">${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}</div><span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
   }).join('');
   $('#chart').innerHTML = `<div class="chart-axis">${ticks.map((tick) => `<span>${isTokens ? compact.format(tick) : money.format(tick)}</span>`).join('')}</div><div class="chart-plot${dense ? ' dense' : ''}"><div class="chart-grid">${ticks.map(() => '<i></i>').join('')}</div><div class="chart-bars${dense ? ' dense' : ''}">${bars}</div></div>`;
 }
