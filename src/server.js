@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { collectCodex, collectCodexLimits, collectOpenCode, openDatabase } from './collector.js';
+import { collectCodex, collectCodexLimits, collectOpenCode, openDatabase, recordLimitsHistory } from './collector.js';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const publicDir = path.join(root, 'public'), dataDir = path.join(root, 'data');
@@ -102,7 +102,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/settings') return sendJson(res, saveSettings(await readBody(req)));
     if (req.method === 'POST' && url.pathname === '/api/pricing') return sendJson(res, savePricing(await readBody(req)));
     if (url.pathname === '/api/data') return sendJson(res, data(url.searchParams));
-    if (url.pathname === '/api/limits') return sendJson(res, await collectCodexLimits());
+    if (url.pathname === '/api/limits') { const limits = await collectCodexLimits(); recordLimitsHistory(db, limits); return sendJson(res, limits); }
+    if (url.pathname === '/api/limits/history') {
+      const days = Math.min(30, Math.max(1, Number(url.searchParams.get('days')) || 7));
+      const points = db.prepare("SELECT taken_at t, primary_remaining p, secondary_remaining s FROM limits_history WHERE taken_at >= datetime('now', ?) ORDER BY taken_at").all(`-${days} days`);
+      return sendJson(res, { points });
+    }
     if (url.pathname === '/api/version') return sendJson(res, { stamp: Math.max(...['index.html', 'app.js', 'style.css'].map((f) => fs.statSync(path.join(publicDir, f)).mtimeMs)), commit: localCommit });
     if (req.method === 'POST' && url.pathname === '/api/update') return sendJson(res, pullUpdate());
     if (url.pathname === '/') return sendFile(res, path.join(publicDir, 'index.html'));

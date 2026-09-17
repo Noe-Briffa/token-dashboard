@@ -37,6 +37,11 @@ export function openDatabase(file) {
     CREATE INDEX IF NOT EXISTS sessions_started_at ON sessions(started_at);
     CREATE INDEX IF NOT EXISTS sessions_project ON sessions(project);
     CREATE INDEX IF NOT EXISTS sessions_platform_model ON sessions(platform, model);
+    CREATE TABLE IF NOT EXISTS limits_history (
+      taken_at TEXT PRIMARY KEY, plan TEXT,
+      primary_remaining REAL, secondary_remaining REAL
+    );
+    CREATE INDEX IF NOT EXISTS limits_history_taken_at ON limits_history(taken_at);
     CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT OR IGNORE INTO app_settings (key, value) VALUES ('codex_desktop_subscription', 'true');
     INSERT OR IGNORE INTO app_settings (key, value) SELECT 'openai_subscription', value FROM app_settings WHERE key='codex_desktop_subscription';
@@ -215,6 +220,15 @@ export async function collectCodexLimits({ authFile = defaultCodexAuth(), cacheM
     if (data.status === 'connected') lastGoodLimits = data;
     return data;
   } catch { return fail('network'); }
+}
+
+export function recordLimitsHistory(db, limits, now = Date.now()) {
+  if (!limits || limits.status !== 'connected') return 0;
+  const last = db.prepare('SELECT taken_at FROM limits_history ORDER BY taken_at DESC LIMIT 1').get();
+  if (last && now - Date.parse(last.taken_at) < 15 * 60000) return 0;
+  db.prepare('INSERT INTO limits_history (taken_at, plan, primary_remaining, secondary_remaining) VALUES (?, ?, ?, ?)').run(new Date(now).toISOString(), limits.plan ?? null, limits.primary?.remaining ?? null, limits.secondary?.remaining ?? null);
+  db.prepare("DELETE FROM limits_history WHERE taken_at < datetime('now', '-30 days')").run();
+  return 1;
 }
 
 export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {

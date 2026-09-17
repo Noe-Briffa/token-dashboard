@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { collectCodex, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase } from '../src/collector.js';
+import { collectCodex, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase, recordLimitsHistory } from '../src/collector.js';
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'usage-monitor-'));
 
@@ -95,6 +95,20 @@ test('normalizes Codex rate limits to remaining percent with reset time', async 
   const missing = await collectCodexLimits({ authFile: path.join(directory, 'nope.json'), cacheMs: 0, fetchImpl });
   assert.equal(missing.status, 'not_connected');
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('records limits history throttled with 30-day purge', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const good = { status: 'connected', plan: 'plus', primary: { remaining: 80 }, secondary: { remaining: 60 } };
+  const now = Date.now();
+  assert.equal(recordLimitsHistory(db, { status: 'network' }, now), 0);
+  assert.equal(recordLimitsHistory(db, good, now - 32 * 60000), 1);
+  assert.equal(recordLimitsHistory(db, good, now - 31 * 60000), 0); // throttle 15 min
+  assert.equal(recordLimitsHistory(db, good, now - 16 * 60000), 1);
+  db.prepare("INSERT INTO limits_history (taken_at, plan, primary_remaining, secondary_remaining) VALUES (datetime('now', '-31 days'), 'plus', 50, 50)").run();
+  assert.equal(recordLimitsHistory(db, good, now), 1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM limits_history WHERE taken_at < datetime('now', '-30 days')").get().n, 0);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test('auto-adds missing models to pricing without duplicates', () => {

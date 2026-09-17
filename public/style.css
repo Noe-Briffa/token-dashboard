@@ -176,6 +176,15 @@ input::placeholder { color: var(--ink-muted); }
 .limit-track i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
 .limit.stale { opacity: .65; }
 .limit.stale .limit-track i { background: var(--ink-muted); }
+.limit.low .limit-track i { background: var(--coral); }
+.limit.low .limit-head span { color: var(--coral); font-weight: 700; }
+.limit-alert { color: var(--coral); font-size: 12px; }
+.limit-history { margin-top: 10px; }
+.limit-spark { display: block; width: 100%; height: 64px; }
+.limit-spark .spark-primary { fill: none; stroke: var(--accent); stroke-width: 2; }
+.limit-spark .spark-secondary { fill: none; stroke: var(--ink-muted); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.limit-spark .limit-threshold { stroke: var(--coral); stroke-width: 1; stroke-dasharray: 3 3; }
+.limit-history-label { font-size: 11px; }
 #limits-retry { padding: 4px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; font-size: 11px; font-weight: 700; }
 #limits-retry:hover { background: var(--accent-soft); border-color: var(--accent); }
 .panel-head { margin-bottom: 14px; }

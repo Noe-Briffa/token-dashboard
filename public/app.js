@@ -183,6 +183,27 @@ const resetLabel = (iso) => {
   const time = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   return date.toDateString() === now.toDateString() ? `reset ${time}` : `reset ${date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} ${time}`;
 };
+const LIMIT_ALERT = 20; // seuil fixe : bandeau rouge + ligne pointillée sous ce % restant
+let limitsHistory = null;
+const historyPath = (points, key) => {
+  const usable = points.map((point, index) => ({ index, value: point[key] })).filter((point) => Number.isFinite(point.value));
+  if (usable.length < 2) return '';
+  const last = Math.max(points.length - 1, 1);
+  return usable.map((point) => `${point === usable[0] ? 'M' : 'L'}${(point.index / last * 300).toFixed(1)},${(62 - Math.min(100, Math.max(0, point.value)) / 100 * 58).toFixed(1)}`).join('');
+};
+function paintHistory() {
+  let el = $('#limit-history');
+  if (!limitsHistory?.points || limitsHistory.points.length < 2) { el?.remove(); return; }
+  if (!el && $('#limits .limit-grid')) { el = document.createElement('div'); el.className = 'limit-history'; el.id = 'limit-history'; $('#limits').appendChild(el); }
+  if (!el) return;
+  const yAlert = (62 - LIMIT_ALERT / 100 * 58).toFixed(1);
+  el.innerHTML = `<svg class="limit-spark" viewBox="0 0 300 64" preserveAspectRatio="none" data-tip="Historique 7 jours du % restant (trait plein : 5 heures, pointillés : hebdo)"><line x1="0" y1="${yAlert}" x2="300" y2="${yAlert}" class="limit-threshold"/><path d="${historyPath(limitsHistory.points, 'p')}" class="spark-primary"/><path d="${historyPath(limitsHistory.points, 's')}" class="spark-secondary"/></svg><span class="muted limit-history-label">7 derniers jours · % restants</span>`;
+}
+let historyAt = 0;
+async function loadHistory(force = false) {
+  if (!force && Date.now() - historyAt < 300000) return;
+  try { limitsHistory = await (await fetch('/api/limits/history?days=7')).json(); historyAt = Date.now(); paintHistory(); } catch { /* courbe garde son état */ }
+}
 const ageLabel = (iso) => {
   if (!iso) return '';
   const minutes = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
@@ -191,21 +212,27 @@ const ageLabel = (iso) => {
 };
 function renderLimits(limits) {
   const el = $('#limits');
+  const low = (window) => window && Number.isFinite(window.remaining) && window.remaining < LIMIT_ALERT;
   const bar = (label, window, stale = false) => window
-    ? `<div class="limit${stale ? ' stale' : ''}"><div class="limit-head"><b>${label}</b><span>${Math.round(window.remaining)}% restants · ${resetLabel(window.resetsAt)}</span></div><div class="limit-track"><i style="width:${Math.min(100, Math.max(0, window.remaining))}%"></i></div></div>`
+    ? `<div class="limit${stale ? ' stale' : ''}${low(window) ? ' low' : ''}"><div class="limit-head"><b>${label}</b><span>${Math.round(window.remaining)}% restants · ${resetLabel(window.resetsAt)}</span></div><div class="limit-track"><i style="width:${Math.min(100, Math.max(0, window.remaining))}%"></i></div></div>`
     : `<div class="limit"><div class="limit-head"><b>${label}</b><span class="muted">indisponible</span></div></div>`;
   const note = { auth_expired: 'session Codex expirée, relance Codex', not_connected: 'Codex non connecté', not_applicable: 'sans objet (clé API)', network: 'réseau injoignable (chatgpt.com)', rate_limited: 'OpenAI limite les appels, réessaie plus tard', service: 'service OpenAI en erreur', empty: 'réponse OpenAI sans fenêtres de quota' }[limits.status] || 'limites indisponibles pour le moment';
   const title = `Limites Codex${limits.plan ? ` · ${escape(limits.plan)}` : ''}`;
-  if (limits.status === 'connected') el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span>temps réel</span></div><div class="limit-grid">${bar('5 heures', limits.primary)}${bar('Hebdo', limits.secondary)}</div>`;
-  else if (limits.primary || limits.secondary) el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span class="muted">${escape(note)} · ${escape(ageLabel(limits.fetchedAt))}</span><button id="limits-retry">Réessayer</button></div><div class="limit-grid">${bar('5 heures', limits.primary, true)}${bar('Hebdo', limits.secondary, true)}</div>`;
+  const alert = [['5 heures', limits.primary], ['Hebdo', limits.secondary]].filter(([, window]) => low(window)).map(([label]) => label).join(' et ');
+  const badge = alert ? `<b class="limit-alert">⚠ ${escape(alert)} sous les ${LIMIT_ALERT} %</b>` : '';
+  const grid = `<div class="limit-grid">${bar('5 heures', limits.primary, limits.status !== 'connected')}${bar('Hebdo', limits.secondary, limits.status !== 'connected')}</div><div class="limit-history" id="limit-history"></div>`;
+  if (limits.status === 'connected') el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span>${badge || 'temps réel'}</span></div>${grid}`;
+  else if (limits.primary || limits.secondary) el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span class="muted">${badge ? `${badge} ` : ''}${escape(note)} · ${escape(ageLabel(limits.fetchedAt))}</span><button id="limits-retry">Réessayer</button></div>${grid}`;
   else el.innerHTML = `<div class="panel-head"><h2>Limites Codex</h2><span class="muted">${escape(note)}</span><button id="limits-retry">Réessayer</button></div>`;
   const retry = $('#limits-retry');
-  if (retry) retry.onclick = () => loadLimits(true);
+  if (retry) retry.onclick = () => { loadLimits(true); loadHistory(true); };
+  paintHistory();
 }
 let limitsAt = 0;
 async function loadLimits(force = false) {
   if (!force && Date.now() - limitsAt < 60000) return;
   try { renderLimits(await (await fetch('/api/limits')).json()); limitsAt = Date.now(); } catch { /* bandeau garde son état */ }
+  loadHistory(force);
 }
 function renderSources(sources) { $('#sources').innerHTML = sources.map((source) => `<span class="source"><i class="status-dot ${source.status === 'connected' ? 'connected' : ''}"></i><b>${escape(source.platform)}</b><span class="muted">${source.status === 'connected' ? `${number.format(source.sessions)} sessions` : 'non connecté'}</span></span>`).join(''); }
 function render(data) {
