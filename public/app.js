@@ -175,7 +175,7 @@ function renderSessions(rows) {
   $('#sessions').innerHTML = rows.map((row) => `<tr><td>${escape(row.id.slice(0, 8))}</td><td>${escape(row.platform)}<br><span class="muted">${escape(row.agent)}</span></td><td>${escape(row.model || 'Inconnu')}</td><td class="project" data-tip="${escape(row.project || '')}">${escape(row.project || '—')}</td><td>${duration(row.duration_seconds)}</td><td>${number.format(row.input_tokens)}</td><td>${number.format(row.cached_input_tokens)}</td><td>${number.format(row.output_tokens + row.reasoning_tokens)}</td><td><b>${number.format(row.total_tokens)}</b></td><td>${row[field] == null ? '—' : money.format(row[field])}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">Aucune session.</td></tr>';
 }
 function renderPricing(rows) {
-  $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td>${escape(row.platform)}</td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="number" min="0" step="any" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
+  $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td>${escape(row.platform)}</td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="text" inputmode="decimal" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
 }
 const resetLabel = (iso) => {
   if (!iso) return 'reset inconnu';
@@ -245,7 +245,7 @@ const normalizeRate = (input) => {
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');
 };
 $('#pricing-rows').addEventListener('focusout', (event) => { if (event.target.matches('.rate')) normalizeRate(event.target); });
-$('#pricing').addEventListener('submit', async (event) => { event.preventDefault(); const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, row.querySelector(`[name="${name}"]`).value || 0])) })); const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) }); if (!response.ok) { alert((await response.json()).error); return; } await load(); });
+$('#pricing').addEventListener('submit', async (event) => { event.preventDefault(); const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) })); const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) }); if (!response.ok) { alert((await response.json()).error); return; } await load(); });
 let assetStamp = 0;
 async function checkVersion() {
   try {
