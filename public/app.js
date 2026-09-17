@@ -140,7 +140,7 @@ function renderChart(days, range, pricing = []) {
      const tokenLabel = !isTokens && tokenTotal && showValueLabel ? compact.format(tokenTotal) : '';
      const topLabel = apiLabel || tokenLabel;
      const edge = index === 0 ? ' edge-start' : index === days.length - 1 ? ' edge-end' : '';
-      return `<div class="bar${rows.length ? '' : ' empty'}" style="--bar-height:${height}%" title="${escape(`${day.day}\n${tip}${isTokens && apiRows.length ? `\nEstimation API : ${money.format(apiTotal)}` : ''}`)}">${topLabel ? `<b class="bar-api${edge}">${topLabel}</b>` : ''}<div class="bar-stack">${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}</div><span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
+      return `<div class="bar${rows.length ? '' : ' empty'}" style="--bar-height:${height}%" title="${escape(`${day.day}\n${tip}${isTokens && apiRows.length ? `\nEstimation API : ${money.format(apiTotal)}` : ''}`)}">${topLabel ? `<b class="bar-api${edge}">${topLabel}</b>` : ''}${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}<span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
   }).join('');
   $('#chart').innerHTML = `<div class="chart-axis">${ticks.map((tick) => `<span>${isTokens ? compact.format(tick) : money.format(tick)}</span>`).join('')}</div><div class="chart-plot${dense ? ' dense' : ''}"><div class="chart-grid">${ticks.map(() => '<i></i>').join('')}</div><div class="chart-bars${dense ? ' dense' : ''}">${bars}</div></div>`;
 }
@@ -216,4 +216,12 @@ themeMedia.addEventListener('change', () => { if (themePreference === 'system') 
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
 $('#subscription').addEventListener('change', async () => { await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ openai_subscription: $('#subscription').checked }) }); await load(); });
 $('#pricing').addEventListener('submit', async (event) => { event.preventDefault(); const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, row.querySelector(`[name="${name}"]`).value || 0])) })); const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) }); if (!response.ok) { alert((await response.json()).error); return; } await load(); });
-setPeriod(); load(); loadLimits(true); setInterval(() => { load(true); loadLimits(); }, 15000);
+let assetStamp = 0;
+async function checkVersion() {
+  try {
+    const stamp = (await (await fetch('/api/version')).json()).stamp;
+    if (!assetStamp) assetStamp = stamp;
+    else if (stamp !== assetStamp) location.reload();
+  } catch { /* garde la page telle quelle */ }
+}
+setPeriod(); load(); loadLimits(true); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);

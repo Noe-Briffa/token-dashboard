@@ -93,6 +93,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/pricing') return sendJson(res, savePricing(await readBody(req)));
     if (url.pathname === '/api/data') return sendJson(res, data(url.searchParams));
     if (url.pathname === '/api/limits') return sendJson(res, await collectCodexLimits());
+    if (url.pathname === '/api/version') return sendJson(res, { stamp: Math.max(...['index.html', 'app.js', 'style.css'].map((f) => fs.statSync(path.join(publicDir, f)).mtimeMs)) });
     if (url.pathname === '/') return sendFile(res, path.join(publicDir, 'index.html'));
     if (url.pathname === '/app.js') return sendFile(res, path.join(publicDir, 'app.js'));
     if (url.pathname === '/style.css') return sendFile(res, path.join(publicDir, 'style.css'));
