@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { collectCodex, collectOpenCode, importSessions, normalizeSession, openDatabase } from '../src/collector.js';
+import { collectCodex, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase } from '../src/collector.js';
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'usage-monitor-'));
 
@@ -70,4 +70,23 @@ test('reports unavailable OpenCode database without interrupting imports', () =>
   const result = collectOpenCode(db, { file: path.join(directory, 'missing.db') });
   assert.equal(result.status, 'not_connected'); assert.equal(result.imported, 0);
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('normalizes Codex rate limits to remaining percent with reset time', async () => {
+  const payload = { plan_type: 'plus', rate_limit: { primary_window: { used_percent: 25, reset_at: 1779459394 }, secondary_window: { used_percent: 18, reset_at: 1779826837 } } };
+  assert.deepEqual(normalizeLimits(payload), { status: 'connected', plan: 'plus', primary: { remaining: 75, resetsAt: '2026-05-22T14:16:34.000Z' }, secondary: { remaining: 82, resetsAt: '2026-05-26T20:20:37.000Z' } });
+  assert.equal(normalizeLimits({}).status, 'unavailable');
+  assert.equal(normalizeLimits({ rate_limit: { primary_window: null, secondary_window: null } }).status, 'unavailable');
+  const directory = temp(), auth = path.join(directory, 'auth.json');
+  fs.writeFileSync(auth, JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'x', account_id: 'y' } }));
+  const seen = [];
+  const fetchImpl = async (url, options) => { seen.push([url, options.headers]); return { status: 200, ok: true, json: async () => payload }; };
+  const limits = await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl });
+  assert.equal(limits.status, 'connected'); assert.equal(limits.primary.remaining, 75);
+  assert.equal(seen[0][0], 'https://chatgpt.com/backend-api/wham/usage');
+  const expired = await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl: async () => ({ status: 401, ok: false }) });
+  assert.equal(expired.status, 'auth_expired');
+  const missing = await collectCodexLimits({ authFile: path.join(directory, 'nope.json'), cacheMs: 0, fetchImpl });
+  assert.equal(missing.status, 'not_connected');
+  fs.rmSync(directory, { recursive: true, force: true });
 });

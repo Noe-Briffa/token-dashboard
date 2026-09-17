@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectCodex, collectOpenCode, openDatabase } from './collector.js';
+import { collectCodex, collectCodexLimits, collectOpenCode, openDatabase } from './collector.js';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const publicDir = path.join(root, 'public'), dataDir = path.join(root, 'data');
@@ -92,6 +92,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/settings') return sendJson(res, saveSettings(await readBody(req)));
     if (req.method === 'POST' && url.pathname === '/api/pricing') return sendJson(res, savePricing(await readBody(req)));
     if (url.pathname === '/api/data') return sendJson(res, data(url.searchParams));
+    if (url.pathname === '/api/limits') return sendJson(res, await collectCodexLimits());
     if (url.pathname === '/') return sendFile(res, path.join(publicDir, 'index.html'));
     if (url.pathname === '/app.js') return sendFile(res, path.join(publicDir, 'app.js'));
     if (url.pathname === '/style.css') return sendFile(res, path.join(publicDir, 'style.css'));

@@ -147,6 +147,27 @@ function renderSessions(rows) {
 function renderPricing(rows) {
   $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td>${escape(row.platform)}</td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="number" min="0" step="any" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
 }
+const resetLabel = (iso) => {
+  if (!iso) return 'reset inconnu';
+  const date = new Date(iso), now = new Date();
+  const time = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  return date.toDateString() === now.toDateString() ? `reset ${time}` : `reset ${date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} ${time}`;
+};
+function renderLimits(limits) {
+  const el = $('#limits');
+  const bar = (label, window) => window
+    ? `<div class="limit"><div class="limit-head"><b>${label}</b><span>${Math.round(window.remaining)}% restants · ${resetLabel(window.resetsAt)}</span></div><div class="limit-track"><i style="width:${Math.min(100, Math.max(0, window.remaining))}%"></i></div></div>`
+    : `<div class="limit"><div class="limit-head"><b>${label}</b><span class="muted">indisponible</span></div></div>`;
+  const note = { auth_expired: 'session Codex expirée, relance Codex', not_connected: 'Codex non connecté', not_applicable: 'sans objet (clé API)', unavailable: 'limites indisponibles pour le moment' }[limits.status];
+  el.innerHTML = limits.status === 'connected'
+    ? `<div class="panel-head"><h2>Limites Codex${limits.plan ? ` · ${escape(limits.plan)}` : ''}</h2><span>temps réel</span></div><div class="limit-grid">${bar('5 heures', limits.primary)}${bar('Hebdo', limits.secondary)}</div>`
+    : `<div class="panel-head"><h2>Limites Codex</h2><span class="muted">${note}</span></div>`;
+}
+let limitsAt = 0;
+async function loadLimits(force = false) {
+  if (!force && Date.now() - limitsAt < 60000) return;
+  try { renderLimits(await (await fetch('/api/limits')).json()); limitsAt = Date.now(); } catch { /* bandeau garde son état */ }
+}
 function renderSources(sources) { $('#sources').innerHTML = sources.map((source) => `<span class="source"><i class="status-dot ${source.status === 'connected' ? 'connected' : ''}"></i><b>${escape(source.platform)}</b><span class="muted">${source.status === 'connected' ? `${number.format(source.sessions)} sessions` : 'non connecté'}</span></span>`).join(''); }
 function render(data) {
   const s = data.summary, cost = s[$('#cost-mode').value];
@@ -176,7 +197,9 @@ async function load(refresh = false) {
   if (firstLoad) { setOptions('#platform', [...new Set(data.options.map((row) => row.platform))]); setOptions('#agent', [...new Set(data.options.map((row) => row.agent))]); setOptions('#model', [...new Set(data.options.map((row) => row.model).filter(Boolean))]); firstLoad = false; }
   render(data); $('#status').textContent = `${number.format(data.summary.sessions)} sessions · actualisé ${new Date().toLocaleTimeString('fr-FR')}`;
 }
-$('#refresh').onclick = () => load(true);
+$('#refresh').onclick = () => { load(true); loadLimits(true); };
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadLimits(); });
+window.addEventListener('focus', () => loadLimits());
 applyTheme(themePreference);
 $('#theme').addEventListener('change', () => {
   themePreference = $('#theme').value;
@@ -188,4 +211,4 @@ themeMedia.addEventListener('change', () => { if (themePreference === 'system') 
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
 $('#subscription').addEventListener('change', async () => { await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ openai_subscription: $('#subscription').checked }) }); await load(); });
 $('#pricing').addEventListener('submit', async (event) => { event.preventDefault(); const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, row.querySelector(`[name="${name}"]`).value || 0])) })); const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) }); if (!response.ok) { alert((await response.json()).error); return; } await load(); });
-setPeriod(); load(); setInterval(() => load(true), 15000);
+setPeriod(); load(); loadLimits(true); setInterval(() => load(true), 15000);

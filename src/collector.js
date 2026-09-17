@@ -4,6 +4,7 @@ import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 
 export const defaultCodexRoot = () => path.join(os.homedir(), '.codex', 'sessions');
+export const defaultCodexAuth = () => path.join(os.homedir(), '.codex', 'auth.json');
 export const defaultOpenCodeDatabase = () => path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
 
 export function openDatabase(file) {
@@ -165,6 +166,46 @@ export function collectCodex(db, { root = defaultCodexRoot() } = {}) {
 }
 
 const iso = (milliseconds) => Number.isFinite(Number(milliseconds)) ? new Date(Number(milliseconds)).toISOString() : null;
+
+// Limites Codex temps réel (fenêtre 5h + hebdo) via backend ChatGPT.
+// Contrat : normalizeLimits(payload) pur et testable ; collectCodexLimits() fait IO + cache.
+export function normalizeLimits(payload) {
+  const remaining = (window) => {
+    if (!window || !Number.isFinite(Number(window.used_percent))) return null;
+    const used = Math.min(100, Math.max(0, Number(window.used_percent)));
+    const at = Number(window.reset_at) * 1000;
+    return { remaining: 100 - used, resetsAt: Number.isFinite(at) && at > 0 ? new Date(at).toISOString() : null };
+  };
+  const rate = payload?.rate_limit || {};
+  const primary = remaining(rate.primary_window), secondary = remaining(rate.secondary_window);
+  if (!primary && !secondary) return { status: 'unavailable', plan: payload?.plan_type || null, primary: null, secondary: null };
+  return { status: 'connected', plan: payload?.plan_type || null, primary, secondary };
+}
+
+let limitsCache = null; // ponytail: mémoire seule, un fetch / 5 min max, pas de table
+export async function collectCodexLimits({ authFile = defaultCodexAuth(), cacheMs = 300000, fetchImpl = fetch, now = Date.now() } = {}) {
+  if (limitsCache && now - limitsCache.at < cacheMs) return limitsCache.data;
+  const fail = (status) => {
+    const data = { status, plan: limitsCache?.data.plan || null, primary: null, secondary: null };
+    limitsCache = { at: now, data };
+    return data;
+  };
+  let auth;
+  try { auth = JSON.parse(fs.readFileSync(authFile, 'utf8')); } catch { return fail('not_connected'); }
+  const token = auth?.tokens?.access_token, accountId = auth?.tokens?.account_id;
+  if (auth?.auth_mode !== 'chatgpt' || !token) return fail(auth?.OPENAI_API_KEY ? 'not_applicable' : 'not_connected');
+  try {
+    const response = await fetchImpl('https://chatgpt.com/backend-api/wham/usage', {
+      headers: { Authorization: `Bearer ${token}`, ...(accountId ? { 'ChatGPT-Account-ID': accountId } : {}) },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (response.status === 401) return fail('auth_expired');
+    if (!response.ok) return fail('unavailable');
+    const data = normalizeLimits(await response.json());
+    limitsCache = { at: now, data };
+    return data;
+  } catch { return fail('unavailable'); }
+}
 
 export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
   if (!fs.existsSync(file)) return { imported: 0, source: file, platform: 'opencode', status: 'not_connected' };

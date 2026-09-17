@@ -161,6 +161,14 @@ input::placeholder { color: var(--ink-muted); }
 .metric[title] { cursor: help; }
 .metric[title] label { cursor: help; }
 
+.limits { margin-top: 16px; }
+.limit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 28px; }
+.limit-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.limit-head b { color: var(--ink); font-size: 12px; }
+.limit-head span { color: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.limit-track { height: 6px; margin-top: 7px; overflow: hidden; background: var(--surface-muted); border: 1px solid var(--line); border-radius: 99px; }
+.limit-track i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+
 .panel-head { margin-bottom: 14px; }
 .panel-head > span { margin-top: 0; }
 .panel-controls { display: flex; align-items: center; gap: 10px; }
@@ -238,6 +246,7 @@ td.project { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
   .donut { width: 130px; height: 130px; }
 }
 @media (max-width: 640px) {
+  .limit-grid { grid-template-columns: 1fr; }
   header { align-items: flex-start; flex-direction: column; gap: 16px; padding: 24px 16px 18px; }
   .header-actions { width: 100%; }
   .header-actions select, .header-actions button { flex: 1; }
