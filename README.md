@@ -7,7 +7,7 @@ Petit tableau de bord local pour suivre ta consommation Codex et OpenCode. Tout 
 Préreqis : Node.js 22.5 ou plus récent (`node --version`) et git.
 
 ```powershell
-git clone https://github.com/<ton-compte>/token-dashboard.git
+git clone https://github.com/Noe-Briffa/token-dashboard.git
 cd token-dashboard
 ```
 

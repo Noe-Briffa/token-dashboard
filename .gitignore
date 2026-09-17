@@ -3,3 +3,7 @@ data/
 node_modules/
 .gitnexus
 .playwright-cli/
+# Tooling dev local uniquement, hors repo public
+.claude/
+AGENTS.md
+CLAUDE.md
