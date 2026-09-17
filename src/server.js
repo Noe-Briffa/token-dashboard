@@ -80,7 +80,7 @@ function savePricing(body) {
   return { saved: body.pricing.length };
 }
 function sendJson(res, payload, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(payload)); }
-function sendFile(res, file) { if (!fs.existsSync(file)) { res.writeHead(404); res.end('Not found'); return; } const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html'; res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8` }); fs.createReadStream(file).pipe(res); }
+function sendFile(res, file) { if (!fs.existsSync(file)) { res.writeHead(404); res.end('Not found'); return; } const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html'; res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store' }); fs.createReadStream(file).pipe(res); }
 function readBody(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', (chunk) => raw += chunk); req.on('end', () => { try { resolve(JSON.parse(raw || '{}')); } catch { reject(new Error('JSON invalide')); } }); req.on('error', reject); }); }
 
 refresh();
