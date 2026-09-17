@@ -211,4 +211,4 @@ themeMedia.addEventListener('change', () => { if (themePreference === 'system') 
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
 $('#subscription').addEventListener('change', async () => { await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ openai_subscription: $('#subscription').checked }) }); await load(); });
 $('#pricing').addEventListener('submit', async (event) => { event.preventDefault(); const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, row.querySelector(`[name="${name}"]`).value || 0])) })); const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) }); if (!response.ok) { alert((await response.json()).error); return; } await load(); });
-setPeriod(); load(); loadLimits(true); setInterval(() => load(true), 15000);
+setPeriod(); load(); loadLimits(true); setInterval(() => { load(true); loadLimits(); }, 15000);
