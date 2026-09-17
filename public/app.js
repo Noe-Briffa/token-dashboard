@@ -1,6 +1,7 @@
 const number = new Intl.NumberFormat('fr-FR');
 const compact = new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFractionDigits: 1 });
 const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const shortMoney = (amount) => money.format(amount).replace(/US$/, '').trimEnd();
 let firstLoad = true;
 let modelColors = new Map();
 let platformColors = new Map();
@@ -135,7 +136,7 @@ function renderChart(days, range, pricing = []) {
      const height = totals[index] / max * 100, showLabel = index % labelStep === 0 || index === days.length - 1;
      const showValueLabel = days.length <= 31 || index % 2 === 0 || index === days.length - 1;
      const label = granularity === 'month' ? day.day : day.day.slice(5);
-     const apiLabel = isTokens && apiRows.length && showValueLabel && (!dense || totals[index] > max * 0.03) ? money.format(apiTotal) : '';
+      const apiLabel = isTokens && apiRows.length && showValueLabel && (!dense || totals[index] > max * 0.03) ? shortMoney(apiTotal) : '';
      const tokenLabel = !isTokens && tokenTotal && showValueLabel ? compact.format(tokenTotal) : '';
      const topLabel = apiLabel || tokenLabel;
      const edge = index === 0 ? ' edge-start' : index === days.length - 1 ? ' edge-end' : '';
