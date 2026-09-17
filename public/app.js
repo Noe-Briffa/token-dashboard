@@ -8,6 +8,20 @@ const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 const duration = (seconds) => seconds ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : '—';
 const metric = (label, value, note = '', title = '') => `<article class="metric"${title ? ` title="${escape(title)}"` : ''}><label>${label}</label><strong>${value}</strong>${note ? `<small class="muted">${note}</small>` : ''}</article>`;
+const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+const readTheme = () => {
+  try { return ['light', 'dark', 'system'].includes(localStorage.getItem('usage-monitor-theme')) ? localStorage.getItem('usage-monitor-theme') : 'system'; } catch { return 'system'; }
+};
+let themePreference = readTheme();
+function applyTheme(preference) {
+  const dark = preference === 'dark' || (preference === 'system' && themeMedia.matches);
+  if (preference === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = preference;
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = dark ? '#26342f' : '#f2f0e9';
+  $('#theme').value = preference;
+}
 const modeLabel = () => $('#cost-mode').value === 'api_cost' ? 'Estimation API' : 'Coût payé';
 const value = (row) => Number(row[$('#metric').value === 'cost' ? $('#cost-mode').value : 'total'] ?? 0);
 const formatted = (amount) => $('#metric').value === 'cost' ? money.format(amount) : compact.format(amount);
@@ -69,7 +83,7 @@ function renderDonut(id, totalId, rows, target) {
      return `<button data-filter="${target}" data-value="${escape(row.label)}" class="${active ? 'active' : ''}" title="${escape(title)}"><i class="dot" style="background:${colorFor(row, target)}"></i><label>${escape(row.label)}</label><small>${formatted(value(row))}</small></button>`;
   }).join('');
   const clearHint = current && usable.length === 1 && usable[0].label === current ? `<button class="legend-clear" data-clear="${target}" title="Revenir à tous les ${target === 'model' ? 'modèles' : 'plateformes'}">↺ Tous</button>` : '';
-  $(`#${id}`).innerHTML = `<svg class="donut" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="none" stroke="#26345a" stroke-width="14"/>${arcs}<text x="50" y="48">${$('#metric').value === 'cost' ? 'COÛT' : 'TOKENS'}</text><text x="50" y="60">${escape(formatted(total))}</text></svg><div class="legend">${legend}${clearHint}</div>`;
+  $(`#${id}`).innerHTML = `<svg class="donut" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="none" stroke="var(--line)" stroke-width="14"/>${arcs}<text x="50" y="48">${$('#metric').value === 'cost' ? 'COÛT' : 'TOKENS'}</text><text x="50" y="60">${escape(formatted(total))}</text></svg><div class="legend">${legend}${clearHint}</div>`;
   $(`#${id}`).querySelectorAll('button[data-filter]').forEach((button) => button.onclick = () => {
     const isActive = button.classList.contains('active');
     $(`#${button.dataset.filter}`).value = isActive ? '' : button.dataset.value;
@@ -93,9 +107,7 @@ function groupChartDays(days, granularity) {
     current.series.push(...day.series);
     grouped.set(key, current);
   }
-  return [...grouped.values()]
-    .map((day) => ({ ...day, series: mergeByModel(day.series) }))
-    .filter((day) => day.series.some((row) => value(row) > 0));
+  return [...grouped.values()].map((day) => ({ ...day, series: mergeByModel(day.series) }));
 }
 function renderChart(days, range) {
   const granularity = $('#chart-granularity').value;
@@ -107,6 +119,7 @@ function renderChart(days, range) {
   const ticks = [max, max * .75, max * .5, max * .25, 0];
   const granularityLabel = { day: 'jour', week: 'semaine', month: 'mois' }[granularity];
   $('#daily-title').textContent = `${$('#metric').value === 'cost' ? modeLabel() : 'Tokens'} par ${granularityLabel}`;
+  $('#chart-annotation').textContent = isTokens ? 'Coût API au-dessus' : 'Tokens au-dessus';
   $('#daily-range').textContent = `${range.start} — ${range.end}`;
   const dense = days.length > 14;
   const labelStep = days.length > 60 ? 7 : days.length > 30 ? 4 : days.length > 14 ? 2 : 1;
@@ -116,11 +129,13 @@ function renderChart(days, range) {
      const tokenTotal = day.series.reduce((sum, row) => sum + Number(row.total || 0), 0);
      const tip = rows.map((row) => `${row.model}: ${formatted(value(row))}`).join('\n') || 'Aucune activité';
      const height = totals[index] / max * 100, showLabel = index % labelStep === 0 || index === days.length - 1;
+     const showValueLabel = days.length <= 31 || index % 2 === 0 || index === days.length - 1;
      const label = granularity === 'month' ? day.day : day.day.slice(5);
-     const apiLabel = isTokens && apiRows.length && (!dense || totals[index] > max * 0.03) ? money.format(apiTotal) : '';
-     const tokenLabel = !isTokens && tokenTotal ? compact.format(tokenTotal) : '';
+     const apiLabel = isTokens && apiRows.length && showValueLabel && (!dense || totals[index] > max * 0.03) ? money.format(apiTotal) : '';
+     const tokenLabel = !isTokens && tokenTotal && showValueLabel ? compact.format(tokenTotal) : '';
      const topLabel = apiLabel || tokenLabel;
-     return `<div class="bar" style="--bar-height:${height}%" title="${escape(`${day.day}\n${tip}${isTokens && apiRows.length ? `\nEstimation API : ${money.format(apiTotal)}` : ''}`)}">${topLabel ? `<b class="bar-api">${topLabel}</b>` : ''}${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}<span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
+     const edge = index === 0 ? ' edge-start' : index === days.length - 1 ? ' edge-end' : '';
+     return `<div class="bar${rows.length ? '' : ' empty'}" style="--bar-height:${height}%" title="${escape(`${day.day}\n${tip}${isTokens && apiRows.length ? `\nEstimation API : ${money.format(apiTotal)}` : ''}`)}">${topLabel ? `<b class="bar-api${edge}">${topLabel}</b>` : ''}${rows.map((row) => `<i class="bar-segment" style="height:${value(row) / max * 100}%;background:${colorFor(row)}"></i>`).join('')}<span${showLabel ? '' : ' class="muted hidden"'}>${showLabel ? label : ''}</span></div>`;
   }).join('');
   $('#chart').innerHTML = `<div class="chart-axis">${ticks.map((tick) => `<span>${isTokens ? compact.format(tick) : money.format(tick)}</span>`).join('')}</div><div class="chart-plot${dense ? ' dense' : ''}"><div class="chart-grid">${ticks.map(() => '<i></i>').join('')}</div><div class="chart-bars${dense ? ' dense' : ''}">${bars}</div></div>`;
 }
@@ -146,12 +161,12 @@ function render(data) {
     if (v > 99.95) return '100%';
     return `${Math.round(v)}%`;
   };
-  const cacheValue = `${fmt(codexFloat)} / ${fmt(openFloat)}`;
+  const cacheValue = `<span class="cache-breakdown"><span><small>Codex</small><b>${fmt(codexFloat)}</b></span><span><small>OpenCode</small><b>${fmt(openFloat)}</b></span></span>`;
   const saved = Number(s.cache_saved) || 0;
-  const cacheNote = `Codex / OpenCode${saved > 0 ? ` · ${money.format(saved)} économisés` : ''}`;
+  const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#subscription').checked = data.settings.openai_subscription;
-  $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—'), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
+  $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
   renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderChart(daily, data.range); renderSessions(data.sessions); renderPricing(data.pricing); renderSources(data.sources);
 }
 async function load(refresh = false) {
@@ -162,6 +177,13 @@ async function load(refresh = false) {
   render(data); $('#status').textContent = `${number.format(data.summary.sessions)} sessions · actualisé ${new Date().toLocaleTimeString('fr-FR')}`;
 }
 $('#refresh').onclick = () => load(true);
+applyTheme(themePreference);
+$('#theme').addEventListener('change', () => {
+  themePreference = $('#theme').value;
+  try { themePreference === 'system' ? localStorage.removeItem('usage-monitor-theme') : localStorage.setItem('usage-monitor-theme', themePreference); } catch { /* preference remains session-only */ }
+  applyTheme(themePreference);
+});
+themeMedia.addEventListener('change', () => { if (themePreference === 'system') applyTheme('system'); });
 ['#metric', '#cost-mode', '#platform', '#agent', '#model', '#project', '#from', '#to', '#chart-granularity'].forEach((id) => $(id).addEventListener('input', () => { if (id === '#from' || id === '#to') $('#period').value = 'custom'; load(); }));
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
 $('#subscription').addEventListener('change', async () => { await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ openai_subscription: $('#subscription').checked }) }); await load(); });

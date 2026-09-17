@@ -1,32 +1,54 @@
 # AI Usage Monitor
 
-Local dashboard for Codex usage. Reads `~/.codex/sessions`, stores normalized
-session totals in SQLite, serves dashboard at `http://127.0.0.1:<port>` (port aléatoire affiché au démarrage).
+Petit tableau de bord local pour suivre ta consommation Codex et OpenCode. Tout reste sur ta machine : les sessions sont lues en local, stockées dans SQLite, et le dashboard tourne sur http://127.0.0.1 avec un port affiché au démarrage.
 
-## Run
+## Démarrage rapide
+
+Préreqis : Node.js 22.5 ou plus récent (`node --version`) et git.
 
 ```powershell
+git clone https://github.com/<ton-compte>/token-dashboard.git
+cd token-dashboard
+```
+
+Ensuite, au choix :
+
+Double-clic (le plus simple) : `start.bat` sous Windows, `./start.sh` sous Mac ou Linux. Le navigateur s'ouvre tout seul sur la bonne adresse.
+
+Ou en ligne de commande :
+
+```powershell
+npm run start:open
+# sans ouverture auto du navigateur :
 npm start
-# port aléatoire à chaque lancement, affiché dans la console
 # pour forcer un port fixe :
 $env:PORT=4318; npm start
 ```
 
-No package install required: Node's built-in HTTP server and SQLite driver are used.
-`npm run collect` performs one import without starting dashboard.
+Pas d'installation de dépendances, le projet utilise seulement le serveur HTTP et le pilote SQLite fournis avec Node.
 
-## Current scope
+## Ce que tu y trouves
 
-- Codex Desktop and CLI JSONL sessions
-- Session, model, project, duration, input/cache/output/reasoning/total tokens
-- Prix USD par modèle, sauvegardés dans SQLite depuis dashboard
-- SQLite import is idempotent; active sessions update on next refresh
+Tokens par jour, semaine ou mois, répartition par modèle et par plateforme, sessions détaillées, coûts estimés via les tarifs que tu saisis dans "Prix des modèles". Les périodes 14, 30, 90, 180 et 365 jours sont disponibles, plus une période personnalisée. Le thème suit le système par défaut, avec un choix clair ou sombre dans l'en-tête.
 
-OpenCode is deliberately not guessed. Add its local database/log format as a
-separate collector when a sample exists.
+`npm run collect` fait un import sans lancer le dashboard.
 
-## Prix et sources
+## Données
 
-Ouvrir « Prix des modèles » dans dashboard et saisir les tarifs USD par million
-de tokens. Un prix absent affiche `—`. Codex est connecté; OpenCode est visible
-comme source future sans lecture de données non vérifiées.
+Codex est lu depuis `~/.codex/sessions`. OpenCode est lu depuis `~/.local/share/opencode/opencode.db` quand le fichier existe, sinon la source s'affiche comme non connectée et le reste continue de marcher.
+
+La base locale vit dans `data/usage.sqlite` (ignorée par git). Les tarifs saisis dans le dashboard sont conservés dedans. Pour repartir de zéro, arrête l'app et supprime ce fichier, il sera recréé au prochain lancement.
+
+## Dépannage
+
+Node trop vieux : mets à jour vers Node 22.5 ou plus récent, sinon le pilote SQLite intégré refuse de démarrer.
+
+Le navigateur ne s'ouvre pas : recopie l'adresse `http://127.0.0.1:...` affichée dans la console.
+
+Aucune session : vérifie que `~/.codex/sessions` existe sur cette machine. Les imports sont idempotents, tu peux relancer sans risque de doublons.
+
+## Tests
+
+```powershell
+npm test
+```

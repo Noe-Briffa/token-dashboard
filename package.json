@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
+    "start:open": "node src/server.js --open",
     "collect": "node src/cli.js",
     "test": "node --test"
   },

@@ -98,7 +98,15 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404); res.end('Not found');
   } catch (error) { sendJson(res, { error: error.message }, 400); }
 });
-server.listen(desiredPort, '127.0.0.1', () => {
+server.listen(desiredPort, '127.0.0.1', async () => {
   const { port } = server.address();
-  console.log(`AI Usage Monitor: http://127.0.0.1:${port}`);
+  const url = `http://127.0.0.1:${port}`;
+  console.log(`AI Usage Monitor: ${url}`);
+  if (process.argv.includes('--open')) {
+    try {
+      const { exec } = await import('node:child_process');
+      const command = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+      exec(command);
+    } catch {}
+  }
 });
