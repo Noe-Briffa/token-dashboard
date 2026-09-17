@@ -212,7 +212,7 @@ button.head-toggle:hover { color: var(--ink); background: none; border: none; te
 .panel-controls { display: flex; align-items: center; gap: 10px; }
 .panel-controls > span { margin-top: 0; }
 .panel-controls select { min-height: 32px; padding-block: 6px; }
-.donuts { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: start; gap: 16px; }
+.donuts { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: start; gap: 16px; margin-top: 24px; }
 .donuts .panel { margin-top: 0; }
 .donut-wrap { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 20px; min-height: 150px; }
 .donut { width: 150px; height: 150px; overflow: visible; }

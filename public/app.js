@@ -99,7 +99,8 @@ function filterQuery() {
 }
 function renderDonut(id, totalId, rows, target) {
   const usable = rows.filter((row) => value(row) > 0), total = usable.reduce((sum, row) => sum + value(row), 0);
-  $(`#${totalId}`).textContent = formatted(total);
+  const totalEl = $(`#${totalId}`);
+  if (totalEl) totalEl.textContent = formatted(total);
   if (!total) { $(`#${id}`).innerHTML = '<span class="muted">Aucune donnée chiffrable.</span>'; return; }
   let offset = 0;
   const arcs = usable.map((row) => {
