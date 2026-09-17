@@ -5,6 +5,12 @@ const shortMoney = (amount) => money.format(amount).replace(/US$/, '').trimEnd()
 let firstLoad = true;
 let modelColors = new Map();
 let platformColors = new Map();
+let projectColors = new Map();
+const shortProject = (label) => {
+  if (!label || label === 'Projet inconnu') return 'Projet inconnu';
+  const parts = String(label).split(/[/\\]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : 'Projet inconnu';
+};
 const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 const duration = (seconds) => seconds ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : '—';
@@ -53,13 +59,15 @@ function hue(index, count, offset) { return `hsl(${Math.round((offset + index * 
 function makeColors(data) {
   const models = [...new Set(data.options.filter((row) => row.model).map((row) => row.model))].sort();
   const platforms = [...new Set(data.options.map((row) => row.platform))].filter(Boolean).sort();
+  const projects = [...new Set(data.projects.map((row) => shortProject(row.label)))].sort();
   modelColors = new Map(models.map((key, index) => [key, hue(index, models.length, 18)]));
   platformColors = new Map(platforms.map((key, index) => [key, hue(index, platforms.length, 210)]));
+  projectColors = new Map(projects.map((key, index) => [key, hue(index, projects.length, 280)]));
 }
 function colorFor(row, kind = 'model') {
-  return kind === 'platform'
-    ? platformColors.get(row.label || row.platform) || '#70e1c8'
-    : modelColors.get(row.model || row.label) || '#70e1c8';
+  if (kind === 'platform') return platformColors.get(row.label || row.platform) || '#70e1c8';
+  if (kind === 'project') return projectColors.get(row.label) || '#70e1c8';
+  return modelColors.get(row.model || row.label) || '#70e1c8';
 }
 function mergeByModel(rows) {
   const merged = new Map();
@@ -105,7 +113,7 @@ function renderDonut(id, totalId, rows, target) {
     const title = active ? 'Cliquer pour afficher tous' : `Filtrer par ${row.label}`;
       return `<button data-filter="${target}" data-value="${escape(row.label)}" class="${active ? 'active' : ''}" data-tip="${escape(title)}"><i class="dot" style="background:${colorFor(row, target)}"></i><label>${escape(row.label)}</label><small>${formatted(value(row))}</small></button>`;
   }).join('');
-  const clearHint = current && usable.length === 1 && usable[0].label === current ? `<button class="legend-clear" data-clear="${target}" data-tip="Revenir à tous les ${target === 'model' ? 'modèles' : 'plateformes'}">↺ Tous</button>` : '';
+  const clearHint = current && usable.length === 1 && usable[0].label === current ? `<button class="legend-clear" data-clear="${target}" data-tip="Revenir à tous les ${target === 'model' ? 'modèles' : target === 'project' ? 'projets' : 'plateformes'}">↺ Tous</button>` : '';
   $(`#${id}`).innerHTML = `<svg class="donut" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="none" stroke="var(--line)" stroke-width="14"/>${arcs}<text x="50" y="48">${$('#metric').value === 'cost' ? 'COÛT' : 'TOKENS'}</text><text x="50" y="60">${escape(formatted(total))}</text></svg><div class="legend">${legend}${clearHint}</div>`;
   $(`#${id}`).querySelectorAll('button[data-filter]').forEach((button) => button.onclick = () => {
     const isActive = button.classList.contains('active');
@@ -188,6 +196,13 @@ const HISTORY_MIN_POINTS = 4; // en dessous : message d'attente plutôt qu'un fa
 const readHistoryPref = () => { try { return localStorage.getItem('usage-monitor-history') !== 'hidden'; } catch { return true; } };
 const saveHistoryPref = (shown) => { try { localStorage.setItem('usage-monitor-history', shown ? 'shown' : 'hidden'); } catch { /* préférence session uniquement */ } };
 let limitsHistory = null, lastLimits = null;
+const readDonutPref = () => { try { return localStorage.getItem('usage-monitor-project-donut') !== 'hidden'; } catch { return true; } };
+function applyDonutPref() {
+  const shown = readDonutPref();
+  $('#project-donut').hidden = !shown;
+  const button = $('#project-donut-toggle');
+  if (button) { button.textContent = shown ? 'Masquer' : 'Afficher'; button.setAttribute('aria-pressed', shown); }
+}
 function historyScale(points) {
   const values = points.flatMap((point) => [point.p, point.s]).filter(Number.isFinite);
   if (!values.length) return null;
@@ -276,6 +291,7 @@ function renderSources(sources) { $('#sources').innerHTML = sources.map((source)
 function render(data) {
   const s = data.summary, cost = s[$('#cost-mode').value];
   const models = mergeByModel(data.models);
+  const projects = mergeByModel(data.projects.map((row) => ({ ...row, label: shortProject(row.label) })));
   const daily = data.daily.map((day) => ({ ...day, series: mergeByModel(day.series) }));
   const codexFloat = s.codex_input ? Math.min(1, Number(s.codex_cached) / Number(s.codex_input)) * 100 : null;
   const openTotal = (Number(s.opencode_input)||0) + (Number(s.opencode_cached)||0);
@@ -292,7 +308,7 @@ function render(data) {
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#subscription').checked = data.settings.openai_subscription;
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderChart(daily, data.range, data.pricing); renderSessions(data.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderChart(daily, data.range, data.pricing); renderSessions(data.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 async function load(refresh = false) {
   if (refresh) await fetch('/api/refresh', { method: 'POST' });
@@ -347,4 +363,5 @@ $('#update').onclick = async () => {
     location.reload();
   } catch (error) { alert(error.message); button.disabled = false; button.textContent = '↓ Nouvelle version'; }
 };
-setPeriod(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
+$('#project-donut-toggle').onclick = () => { try { localStorage.setItem('usage-monitor-project-donut', readDonutPref() ? 'hidden' : 'shown'); } catch { /* préférence session uniquement */ } applyDonutPref(); };
+setPeriod(); watchTips(); applyDonutPref(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
