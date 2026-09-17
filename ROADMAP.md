@@ -8,4 +8,4 @@ Registre des évolutions. Cocher au fur et à mesure des livraisons.
 - [ ] P3 — Budget mensuel : jauge coût réel vs plafond configurable
 - [ ] P4 — Comparaison de périodes : delta % vs 14 jours précédents sur les cartes
 - [ ] P5 — Export CSV des sessions filtrées
-- [x] P6 — Top projets : 3e donut par projet, noms courts, toggle Masquer/Afficher
+- [x] P6 — Top projets : 3e donut par projet, noms courts (toggle donut retiré, graphique limites masqué par défaut)

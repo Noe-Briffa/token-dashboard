@@ -193,16 +193,9 @@ const resetLabel = (iso) => {
 };
 const LIMIT_ALERT = 20; // seuil fixe : bandeau rouge + ligne pointillée sous ce % restant
 const HISTORY_MIN_POINTS = 4; // en dessous : message d'attente plutôt qu'un faux plat
-const readHistoryPref = () => { try { return localStorage.getItem('usage-monitor-history') !== 'hidden'; } catch { return true; } };
+const readHistoryPref = () => { try { return localStorage.getItem('usage-monitor-history') === 'shown'; } catch { return false; } };
 const saveHistoryPref = (shown) => { try { localStorage.setItem('usage-monitor-history', shown ? 'shown' : 'hidden'); } catch { /* préférence session uniquement */ } };
 let limitsHistory = null, lastLimits = null;
-const readDonutPref = () => { try { return localStorage.getItem('usage-monitor-project-donut') !== 'hidden'; } catch { return true; } };
-function applyDonutPref() {
-  const shown = readDonutPref();
-  $('#project-donut').hidden = !shown;
-  const button = $('#project-donut-toggle');
-  if (button) { button.textContent = shown ? 'Masquer' : 'Afficher'; button.setAttribute('aria-pressed', shown); }
-}
 function historyScale(points) {
   const values = points.flatMap((point) => [point.p, point.s]).filter(Number.isFinite);
   if (!values.length) return null;
@@ -363,5 +356,4 @@ $('#update').onclick = async () => {
     location.reload();
   } catch (error) { alert(error.message); button.disabled = false; button.textContent = '↓ Nouvelle version'; }
 };
-$('#project-donut-toggle').onclick = () => { try { localStorage.setItem('usage-monitor-project-donut', readDonutPref() ? 'hidden' : 'shown'); } catch { /* préférence session uniquement */ } applyDonutPref(); };
-setPeriod(); watchTips(); applyDonutPref(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
+setPeriod(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
