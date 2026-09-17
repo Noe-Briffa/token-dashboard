@@ -183,15 +183,16 @@ export function normalizeLimits(payload) {
   };
   const rate = payload?.rate_limit || {};
   const primary = remaining(rate.primary_window), secondary = remaining(rate.secondary_window);
-  if (!primary && !secondary) return { status: 'unavailable', plan: payload?.plan_type || null, primary: null, secondary: null };
+  if (!primary && !secondary) return { status: 'empty', plan: payload?.plan_type || null, primary: null, secondary: null };
   return { status: 'connected', plan: payload?.plan_type || null, primary, secondary };
 }
 
 let limitsCache = null; // ponytail: mémoire seule, un fetch / 5 min max, pas de table
+let lastGoodLimits = null; // dernier succès, réaffiché en grisé en cas d'échec
 export async function collectCodexLimits({ authFile = defaultCodexAuth(), cacheMs = 300000, fetchImpl = fetch, now = Date.now() } = {}) {
   if (limitsCache && now - limitsCache.at < cacheMs) return limitsCache.data;
   const fail = (status) => {
-    const data = { status, plan: limitsCache?.data.plan || null, primary: null, secondary: null };
+    const data = { status, plan: lastGoodLimits?.plan || null, primary: lastGoodLimits?.primary || null, secondary: lastGoodLimits?.secondary || null, fetchedAt: lastGoodLimits?.fetchedAt || null };
     limitsCache = { at: now, data };
     return data;
   };
@@ -205,11 +206,15 @@ export async function collectCodexLimits({ authFile = defaultCodexAuth(), cacheM
       signal: AbortSignal.timeout(10000),
     });
     if (response.status === 401) return fail('auth_expired');
-    if (!response.ok) return fail('unavailable');
-    const data = normalizeLimits(await response.json());
+    if (response.status === 429) return fail('rate_limited');
+    if (!response.ok) return fail('service');
+    let data;
+    try { data = { ...normalizeLimits(await response.json()), fetchedAt: new Date(now).toISOString() }; }
+    catch { return fail('service'); }
     limitsCache = { at: now, data };
+    if (data.status === 'connected') lastGoodLimits = data;
     return data;
-  } catch { return fail('unavailable'); }
+  } catch { return fail('network'); }
 }
 
 export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {

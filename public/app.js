@@ -183,15 +183,24 @@ const resetLabel = (iso) => {
   const time = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   return date.toDateString() === now.toDateString() ? `reset ${time}` : `reset ${date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} ${time}`;
 };
+const ageLabel = (iso) => {
+  if (!iso) return '';
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+  if (minutes < 1) return "à l'instant";
+  return minutes < 60 ? `il y a ${minutes} min` : `il y a ${Math.floor(minutes / 60)} h`;
+};
 function renderLimits(limits) {
   const el = $('#limits');
-  const bar = (label, window) => window
-    ? `<div class="limit"><div class="limit-head"><b>${label}</b><span>${Math.round(window.remaining)}% restants · ${resetLabel(window.resetsAt)}</span></div><div class="limit-track"><i style="width:${Math.min(100, Math.max(0, window.remaining))}%"></i></div></div>`
+  const bar = (label, window, stale = false) => window
+    ? `<div class="limit${stale ? ' stale' : ''}"><div class="limit-head"><b>${label}</b><span>${Math.round(window.remaining)}% restants · ${resetLabel(window.resetsAt)}</span></div><div class="limit-track"><i style="width:${Math.min(100, Math.max(0, window.remaining))}%"></i></div></div>`
     : `<div class="limit"><div class="limit-head"><b>${label}</b><span class="muted">indisponible</span></div></div>`;
-  const note = { auth_expired: 'session Codex expirée, relance Codex', not_connected: 'Codex non connecté', not_applicable: 'sans objet (clé API)', unavailable: 'limites indisponibles pour le moment' }[limits.status];
-  el.innerHTML = limits.status === 'connected'
-    ? `<div class="panel-head"><h2>Limites Codex${limits.plan ? ` · ${escape(limits.plan)}` : ''}</h2><span>temps réel</span></div><div class="limit-grid">${bar('5 heures', limits.primary)}${bar('Hebdo', limits.secondary)}</div>`
-    : `<div class="panel-head"><h2>Limites Codex</h2><span class="muted">${note}</span></div>`;
+  const note = { auth_expired: 'session Codex expirée, relance Codex', not_connected: 'Codex non connecté', not_applicable: 'sans objet (clé API)', network: 'réseau injoignable (chatgpt.com)', rate_limited: 'OpenAI limite les appels, réessaie plus tard', service: 'service OpenAI en erreur', empty: 'réponse OpenAI sans fenêtres de quota' }[limits.status] || 'limites indisponibles pour le moment';
+  const title = `Limites Codex${limits.plan ? ` · ${escape(limits.plan)}` : ''}`;
+  if (limits.status === 'connected') el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span>temps réel</span></div><div class="limit-grid">${bar('5 heures', limits.primary)}${bar('Hebdo', limits.secondary)}</div>`;
+  else if (limits.primary || limits.secondary) el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span class="muted">${escape(note)} · ${escape(ageLabel(limits.fetchedAt))}</span><button id="limits-retry">Réessayer</button></div><div class="limit-grid">${bar('5 heures', limits.primary, true)}${bar('Hebdo', limits.secondary, true)}</div>`;
+  else el.innerHTML = `<div class="panel-head"><h2>Limites Codex</h2><span class="muted">${escape(note)}</span><button id="limits-retry">Réessayer</button></div>`;
+  const retry = $('#limits-retry');
+  if (retry) retry.onclick = () => loadLimits(true);
 }
 let limitsAt = 0;
 async function loadLimits(force = false) {

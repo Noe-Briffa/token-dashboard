@@ -75,8 +75,8 @@ test('reports unavailable OpenCode database without interrupting imports', () =>
 test('normalizes Codex rate limits to remaining percent with reset time', async () => {
   const payload = { plan_type: 'plus', rate_limit: { primary_window: { used_percent: 25, reset_at: 1779459394 }, secondary_window: { used_percent: 18, reset_at: 1779826837 } } };
   assert.deepEqual(normalizeLimits(payload), { status: 'connected', plan: 'plus', primary: { remaining: 75, resetsAt: '2026-05-22T14:16:34.000Z' }, secondary: { remaining: 82, resetsAt: '2026-05-26T20:20:37.000Z' } });
-  assert.equal(normalizeLimits({}).status, 'unavailable');
-  assert.equal(normalizeLimits({ rate_limit: { primary_window: null, secondary_window: null } }).status, 'unavailable');
+  assert.equal(normalizeLimits({}).status, 'empty');
+  assert.equal(normalizeLimits({ rate_limit: { primary_window: null, secondary_window: null } }).status, 'empty');
   const directory = temp(), auth = path.join(directory, 'auth.json');
   fs.writeFileSync(auth, JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'x', account_id: 'y' } }));
   const seen = [];
@@ -86,6 +86,12 @@ test('normalizes Codex rate limits to remaining percent with reset time', async 
   assert.equal(seen[0][0], 'https://chatgpt.com/backend-api/wham/usage');
   const expired = await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl: async () => ({ status: 401, ok: false }) });
   assert.equal(expired.status, 'auth_expired');
+  assert.equal(expired.primary.remaining, 75); // dernier succès conservé
+  assert.ok(typeof expired.fetchedAt === 'string');
+  assert.equal((await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl: async () => ({ status: 429, ok: false }) })).status, 'rate_limited');
+  assert.equal((await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl: async () => ({ status: 500, ok: false }) })).status, 'service');
+  assert.equal((await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl: async () => { throw new Error('down'); } })).status, 'network');
+  assert.equal((await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl: async () => ({ status: 200, ok: true, json: async () => ({}) }) })).status, 'empty');
   const missing = await collectCodexLimits({ authFile: path.join(directory, 'nope.json'), cacheMs: 0, fetchImpl });
   assert.equal(missing.status, 'not_connected');
   fs.rmSync(directory, { recursive: true, force: true });
