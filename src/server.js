@@ -69,9 +69,8 @@ function data(query) {
   const options = db.prepare('SELECT DISTINCT platform, agent, model, project FROM sessions ORDER BY platform, agent, model').all();
   const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
   const sourceRows = db.prepare('SELECT platform, COUNT(*) sessions FROM sessions GROUP BY platform').all();
-  return { summary, sessions, daily, models, platforms, projects, options, pricing, range, settings: { openai_subscription: subscriptionEnabled() }, sources: [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceRows.find((row) => row.platform === 'codex')?.sessions || 0 }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0 }] };
+  return { summary, sessions, daily, models, platforms, projects, options, pricing, range, sources: [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceRows.find((row) => row.platform === 'codex')?.sessions || 0 }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0 }] };
 }
-function saveSettings(body) { if (typeof body.openai_subscription !== 'boolean') throw new Error('Réglage abonnement invalide'); db.prepare("INSERT INTO app_settings (key,value) VALUES ('openai_subscription',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(body.openai_subscription)); return { openai_subscription: body.openai_subscription }; }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');
   const upsert = db.prepare(`INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, provider, pricing_unit, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(platform, model) DO UPDATE SET input_usd_per_million=excluded.input_usd_per_million, cached_input_usd_per_million=excluded.cached_input_usd_per_million, output_usd_per_million=excluded.output_usd_per_million, reasoning_usd_per_million=excluded.reasoning_usd_per_million, updated_at=excluded.updated_at`);
@@ -108,7 +107,6 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   try {
     if (req.method === 'POST' && url.pathname === '/api/refresh') return sendJson(res, refresh());
-    if (req.method === 'POST' && url.pathname === '/api/settings') return sendJson(res, saveSettings(await readBody(req)));
     if (req.method === 'POST' && url.pathname === '/api/pricing') return sendJson(res, savePricing(await readBody(req)));
     if (url.pathname === '/api/data') return sendJson(res, data(url.searchParams));
     if (url.pathname === '/api/limits') { const limits = await collectCodexLimits(); recordLimitsHistory(db, limits); return sendJson(res, limits); }
