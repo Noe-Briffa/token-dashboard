@@ -202,6 +202,12 @@ input::placeholder { color: var(--ink-muted); }
 .spark-threshold-chip { position: absolute; right: 0; color: var(--coral); font-size: 11px; font-weight: 700; transform: translateY(-50%); }
 .spark-x { display: flex; align-items: baseline; justify-content: space-between; margin-top: 2px; padding-left: 40px; color: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .limit-actions { display: flex; gap: 8px; }
+.split-track { display: flex; height: 10px; overflow: hidden; background: var(--surface-muted); border: 1px solid var(--line); border-radius: 99px; }
+.split-track i { display: block; height: 100%; }
+.split-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; }
+.split-key { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.split-key .dot { display: inline-block; }
+.split-key small { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 .limit-history-label { font-size: 11px; }
 #limits-retry { padding: 4px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 #limits-retry:hover { background: var(--accent-soft); border-color: var(--accent); }

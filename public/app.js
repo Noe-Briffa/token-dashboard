@@ -281,6 +281,14 @@ async function loadLimits(force = false) {
   try { renderLimits(await (await fetch('/api/limits')).json()); limitsAt = Date.now(); } catch { /* bandeau garde son état */ }
   loadHistory(force);
 }
+function renderSplit(s) {
+  const parts = [['Input', Number(s.input) || 0, 'var(--blue)'], ['Cache', Number(s.cached) || 0, 'var(--ink-muted)'], ['Output', Number(s.output) || 0, 'var(--accent)'], ['Raisonnement', Number(s.reasoning) || 0, 'var(--violet)']];
+  const total = parts.reduce((sum, [, value]) => sum + value, 0);
+  const pct = (value) => value ? `${(value / total * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '0 %';
+  if (!total) { $('#split-bar').innerHTML = ''; $('#split-legend').innerHTML = '<span class="muted">Aucune donnée.</span>'; return; }
+  $('#split-bar').innerHTML = `<div class="split-track">${parts.map(([label, value, color]) => value > 0 ? `<i style="width:${value / total * 100}%;background:${color}" data-tip="${escape(`${label} : ${compact.format(value)} (${pct(value)})`)}"></i>` : '').join('')}</div>`;
+  $('#split-legend').innerHTML = parts.map(([label, value, color]) => `<span class="split-key"><i class="dot" style="background:${color}"></i><label>${escape(label)}</label><small>${compact.format(value)} · ${pct(value)}</small></span>`).join('');
+}
 function renderSources(sources) { $('#sources').innerHTML = sources.map((source) => `<span class="source"><i class="status-dot ${source.status === 'connected' ? 'connected' : ''}"></i><b>${escape(source.platform)}</b><span class="muted">${source.status === 'connected' ? `${number.format(source.sessions)} sessions` : 'non connecté'}</span></span>`).join(''); }
 function render(data) {
   const s = data.summary, cost = s[$('#cost-mode').value];
@@ -302,7 +310,7 @@ function render(data) {
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#subscription').checked = data.settings.openai_subscription;
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderChart(daily, data.range, data.pricing); renderSessions(data.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderSessions(data.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 async function load(refresh = false) {
   if (refresh) await fetch('/api/refresh', { method: 'POST' });
