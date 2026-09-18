@@ -192,6 +192,10 @@ input::placeholder { color: var(--ink-muted); }
 .limit-actions { display: flex; gap: 8px; }
 .split-track { display: flex; height: 10px; overflow: hidden; background: var(--surface-muted); border: 1px solid var(--line); border-radius: 99px; }
 .split-track i { display: block; height: 100%; }
+.split-row { display: flex; align-items: center; gap: 10px; }
+.split-row + .split-row { margin-top: 8px; }
+.split-row .split-track { flex: 1; }
+.split-rowlabel { flex: none; width: 110px; color: var(--ink-muted); font-size: 11px; }
 .split-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; }
 .split-key { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; }
 .split-key .dot { display: inline-block; margin-top: 4px; }
