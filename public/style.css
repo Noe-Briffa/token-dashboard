@@ -139,19 +139,7 @@ select, input:not([type="checkbox"]) {
 }
 select:hover, input:not([type="checkbox"]):hover { border-color: var(--accent); }
 input::placeholder { color: var(--ink-muted); }
-#project { width: 160px; }
-.subscription {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 36px;
-  padding: 8px 10px;
-  color: var(--ink-muted);
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  font-size: 12px;
-}
-.subscription input { accent-color: var(--accent); margin: 0; }
+
 
 .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; margin: 16px 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--line); }
 .metric { min-width: 0; padding: 16px 17px; border: 0; border-radius: 0; }
@@ -337,8 +325,6 @@ td.project { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
   .panel-controls span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toolbar-head { align-items: flex-start; flex-direction: column; gap: 4px; }
   .filters > * { flex: 1 1 135px; }
-  .filters .subscription { flex-basis: 100%; }
-  .filters #project { flex-basis: 100%; width: auto; }
   .filters input[type="date"] { flex-basis: calc(50% - 4px); }
   .sources { align-items: flex-start; flex-direction: column; }
   #sources { justify-content: flex-start; }
