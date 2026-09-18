@@ -129,6 +129,20 @@ test('counts per-file deltas for resumed Codex sessions sharing cumulative count
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 
+test('applies project override for the referenced-chatgpt handoff session', () => {
+  const directory = temp(), root = path.join(directory, 'sessions'); fs.mkdirSync(root, { recursive: true });
+  const file = path.join(root, 'rollout-b.jsonl');
+  const rows = [
+    { timestamp: '2026-09-16T10:00:00Z', type: 'session_meta', payload: { session_id: 'over-1', timestamp: '2026-09-16T10:00:00Z', cwd: 'C:/Users/noebr/Documents/Codex/2026-09-16/referenced-chatgpt-conversation-this-is-an', originator: 'Codex CLI' } },
+    { timestamp: '2026-09-16T10:01:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 } } } },
+    { timestamp: '2026-09-16T10:02:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 50, cached_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 0, total_tokens: 55 } } } }
+  ]; fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  collectCodex(db, { root });
+  assert.equal(db.prepare("SELECT project FROM sessions WHERE id='over-1'").get().project, 'C:\\Users\\noebr\\Documents\\Documents\\Projets\\ePortfolio');
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
 test('auto-adds missing models to pricing without duplicates', () => {
   const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
   const session = (id, platform, model) => ({ platform, agent: 'Test', id, sourcePath: id, model, input: 10, cached: 0, output: 5, reasoning: 0, total: 15 });

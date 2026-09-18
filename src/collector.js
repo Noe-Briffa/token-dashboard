@@ -94,6 +94,16 @@ export function normalizeSession(session) {
   };
 }
 
+// Exception demandée : ce handoff ChatGPT appartient à ePortfolio (aucune métadonnée Codex ne le dit).
+const PROJECT_OVERRIDES = [
+  ['referenced-chatgpt-conversation-this-is-an', 'C:\\Users\\noebr\\Documents\\Documents\\Projets\\ePortfolio'],
+];
+const applyProjectOverride = (project) => {
+  if (!project) return project;
+  const hit = PROJECT_OVERRIDES.find(([match]) => project.includes(match));
+  return hit ? hit[1] : project;
+};
+
 export function parseCodexSession(file) {
   let meta = {}, startedAt = null, endedAt = null;
   // Compteurs cumulatifs par session, ré-émis dans chaque fichier de reprise :
@@ -138,7 +148,7 @@ export function parseCodexSession(file) {
   const base = {
     platform: 'codex', provider: 'openai', id: fileId,
     agent: meta.originator === 'Codex Desktop' ? 'Codex Desktop' : 'Codex CLI', sourcePath: file,
-    project: meta.cwd, startedAt: sessionStart, endedAt,
+    project: applyProjectOverride(meta.cwd), startedAt: sessionStart, endedAt,
     durationSeconds: start && end ? Math.max(0, Math.round((end - start) / 1000)) : 0,
   };
   // ventilation exacte: if multiple models, split tokens per model by turn count (best-effort without per-turn deltas)
