@@ -20,7 +20,14 @@ function costs() {
   const openAiModel = `(LOWER(COALESCE(s.provider,''))='openai' OR LOWER(COALESCE(s.model,'')) GLOB 'gpt-*' OR LOWER(COALESCE(s.model,'')) LIKE '%/gpt-%' OR LOWER(COALESCE(s.model,'')) GLOB 'o[134]-*' OR LOWER(COALESCE(s.model,'')) GLOB 'codex-*' OR LOWER(COALESCE(s.model,'')) LIKE 'chatgpt-%')`;
   const covered = `(s.platform='codex' OR (s.platform='opencode' AND ${openAiModel}))`;
   const paid = subscriptionEnabled() ? `CASE WHEN ${covered} THEN 0 ELSE ${api} END` : api;
-  return { api, paid };
+  const part = {
+    input: `(s.input_tokens * COALESCE(p.input_usd_per_million,0)) / 1000000.0`,
+    cached: `(s.cached_input_tokens * COALESCE(p.cached_input_usd_per_million,0)) / 1000000.0`,
+    output: `(s.output_tokens * COALESCE(p.output_usd_per_million,0)) / 1000000.0`,
+    reasoning: `(s.reasoning_tokens * COALESCE(p.reasoning_usd_per_million,0)) / 1000000.0`,
+  };
+  const paidPart = (expr) => subscriptionEnabled() ? `CASE WHEN ${covered} THEN 0 ELSE ${expr} END` : expr;
+  return { api, paid, part, paidPart };
 }
 const parisDateStr = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 function filters(query) {
@@ -50,7 +57,7 @@ function data(query) {
   const range = calendar(query), ranged = new URLSearchParams(query);
   if (!ranged.get('from')) ranged.set('from', range.start); if (!ranged.get('to')) ranged.set('to', range.end);
   const { where, params } = filters(ranged), base = selectBase(where), price = costs();
-  const summary = db.prepare(`SELECT COUNT(*) sessions, COALESCE(SUM(s.input_tokens),0) input, COALESCE(SUM(s.cached_input_tokens),0) cached, COALESCE(SUM(s.output_tokens),0) output, COALESCE(SUM(s.reasoning_tokens),0) reasoning, COALESCE(SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens),0) total, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.input_tokens END),0) codex_input, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.cached_input_tokens END),0) codex_cached, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.input_tokens END),0) opencode_input, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.cached_input_tokens END),0) opencode_cached, COALESCE(SUM(s.cached_input_tokens * (COALESCE(p.input_usd_per_million,0) - COALESCE(p.cached_input_usd_per_million,0)) / 1000000.0),0) cache_saved, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base}`).get(...params);
+  const summary = db.prepare(`SELECT COUNT(*) sessions, COALESCE(SUM(s.input_tokens),0) input, COALESCE(SUM(s.cached_input_tokens),0) cached, COALESCE(SUM(s.output_tokens),0) output, COALESCE(SUM(s.reasoning_tokens),0) reasoning, COALESCE(SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens),0) total, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.input_tokens END),0) codex_input, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.cached_input_tokens END),0) codex_cached, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.input_tokens END),0) opencode_input, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.cached_input_tokens END),0) opencode_cached, COALESCE(SUM(s.cached_input_tokens * (COALESCE(p.input_usd_per_million,0) - COALESCE(p.cached_input_usd_per_million,0)) / 1000000.0),0) cache_saved, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost, SUM(${price.part.input}) input_api_cost, SUM(${price.part.cached}) cached_api_cost, SUM(${price.part.output}) output_api_cost, SUM(${price.part.reasoning}) reasoning_api_cost, SUM(${price.paidPart(price.part.input)}) input_paid_cost, SUM(${price.paidPart(price.part.cached)}) cached_paid_cost, SUM(${price.paidPart(price.part.output)}) output_paid_cost, SUM(${price.paidPart(price.part.reasoning)}) reasoning_paid_cost ${base}`).get(...params);
   const sessions = db.prepare(`SELECT s.*, ${price.api} api_estimated_cost_usd, ${price.paid} out_of_pocket_cost_usd ${base} ORDER BY s.started_at DESC LIMIT 1000`).all(...params);
   for (const row of sessions) row.total_tokens = row.input_tokens + row.cached_input_tokens + row.output_tokens + row.reasoning_tokens; // total = vrai volume, cache inclus
   const dailyRows = db.prepare(`SELECT date(s.started_at,'localtime') day, COALESCE(s.model,'Modèle inconnu') model, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY day, s.model`).all(...params);
