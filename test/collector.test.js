@@ -111,6 +111,19 @@ test('records limits history throttled with 30-day purge', () => {
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 
+test('counts resumed Codex sessions once using the latest cumulative file', () => {
+  const directory = temp(), root = path.join(directory, 'sessions'); fs.mkdirSync(root, { recursive: true });
+  const meta = { session_id: 'dup-1', timestamp: '2026-09-17T10:00:00Z', cwd: 'C:/x', originator: 'Codex CLI' };
+  const turn = { timestamp: '2026-09-17T10:00:00Z', type: 'turn_context', payload: { model: 'gpt-test' } };
+  const usage = (total) => ({ timestamp: '2026-09-17T11:00:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: total, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: total } } } });
+  fs.writeFileSync(path.join(root, 'rollout-a.jsonl'), [{ timestamp: '2026-09-17T10:00:00Z', type: 'session_meta', payload: meta }, turn, usage(100)].map(JSON.stringify).join('\n'));
+  fs.writeFileSync(path.join(root, 'rollout-a_fork.jsonl'), [{ timestamp: '2026-09-17T10:00:00Z', type: 'session_meta', payload: meta }, turn, usage(250)].map(JSON.stringify).join('\n'));
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  collectCodex(db, { root });
+  assert.equal(db.prepare("SELECT SUM(total_tokens) n FROM sessions WHERE platform='codex'").get().n, 250);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
 test('auto-adds missing models to pricing without duplicates', () => {
   const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
   const session = (id, platform, model) => ({ platform, agent: 'Test', id, sourcePath: id, model, input: 10, cached: 0, output: 5, reasoning: 0, total: 15 });

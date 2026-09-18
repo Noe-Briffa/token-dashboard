@@ -167,12 +167,26 @@ export function importSessions(db, sessions) {
 }
 
 export function collectCodex(db, { root = defaultCodexRoot() } = {}) {
-  const sessions = filesUnder(root).flatMap((f) => {
-    const r = parseCodexSession(f);
-    return Array.isArray(r) ? r : [r];
-  });
-  const imported = importSessions(db, sessions);
-  return { imported, source: root, platform: 'codex' };
+  // Codex écrit une suite de fichiers _<fork> par reprise partageant le même session_id,
+  // chacun avec des compteurs CUMULATIFS => ne garder que le fichier au total max, sinon tout est compté N fois.
+  const bySession = new Map();
+  for (const f of filesUnder(root)) {
+    const parsed = parseCodexSession(f);
+    const rows = (Array.isArray(parsed) ? parsed : [parsed]).filter((r) => r && r.id);
+    if (!rows.length) continue;
+    const key = String(rows[0].id).split(':')[0];
+    const total = rows.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+    if (!bySession.has(key) || total > bySession.get(key).total) bySession.set(key, { total, rows });
+  }
+  const winners = [...bySession.values()].flatMap((g) => g.rows);
+  const drop = db.prepare("DELETE FROM sessions WHERE platform='codex' AND (id = ? OR id LIKE ? ESCAPE '\\')");
+  db.exec('BEGIN');
+  try {
+    for (const key of bySession.keys()) drop.run(key, `${key.replace(/[\\%_]/g, (c) => `\\${c}`)}:%`); // purge les fichiers de reprise superseded (auto-répare l'historique gonflé)
+    const imported = importSessions(db, winners);
+    db.exec('COMMIT');
+    return { imported, source: root, platform: 'codex' };
+  } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }
 }
 
 const iso = (milliseconds) => Number.isFinite(Number(milliseconds)) ? new Date(Number(milliseconds)).toISOString() : null;
