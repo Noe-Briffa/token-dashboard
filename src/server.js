@@ -69,7 +69,8 @@ function data(query) {
   const options = db.prepare('SELECT DISTINCT platform, agent, model, project FROM sessions ORDER BY platform, agent, model').all();
   const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
   const sourceRows = db.prepare('SELECT platform, COUNT(*) sessions FROM sessions GROUP BY platform').all();
-  return { summary, sessions, daily, models, platforms, projects, options, pricing, range, sources: [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceRows.find((row) => row.platform === 'codex')?.sessions || 0 }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0 }] };
+  const sources = [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceState.codex.sourceSessions ?? (sourceRows.find((row) => row.platform === 'codex')?.sessions || 0) }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceState.opencode.sourceSessions ?? (sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0) }];
+  return { summary: { ...summary, sessions: sources.reduce((total, source) => total + source.sessions, 0) }, sessions, daily, models, platforms, projects, options, pricing, range, sources };
 }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');

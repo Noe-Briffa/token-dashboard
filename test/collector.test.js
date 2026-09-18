@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { collectCodex, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase, recordLimitsHistory } from '../src/collector.js';
+import { collectCodex, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase, parseCodexSession, recordLimitsHistory } from '../src/collector.js';
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'usage-monitor-'));
 
@@ -59,11 +59,34 @@ test('stored price changes computed cost without changing session data', () => {
 test('imports OpenCode model IDs, reported cost and cache reads', () => {
   const directory = temp(), sourceFile = path.join(directory, 'opencode.db'), target = openDatabase(path.join(directory, 'usage.sqlite'));
   const source = new DatabaseSync(sourceFile);
-  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); INSERT INTO project VALUES ('p1','Demo'); INSERT INTO session VALUES ('s1','p1','C:/demo','build','{"id":"provider/model","providerID":"openai","variant":"fast"}',0.42,1000,61000,100,25,15,75);`); source.close();
+  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); INSERT INTO project VALUES ('p1','Demo'); INSERT INTO session VALUES ('s1','p1',NULL,'C:/demo','build','{"id":"provider/model","providerID":"openai","variant":"fast"}',0.42,1000,61000,100,25,15,75);`); source.close();
   const result = collectOpenCode(target, { file: sourceFile });
   assert.equal(result.status, 'connected'); assert.equal(result.imported, 1);
   const row = target.prepare('SELECT platform, provider, model, project, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, reported_cost_usd FROM sessions WHERE id=?').get('opencode:s1');
   assert.equal(row.platform, 'opencode'); assert.equal(row.provider, 'openai'); assert.equal(row.model, 'provider/model'); assert.equal(row.project, 'Demo'); assert.equal(row.input_tokens, 100); assert.equal(row.cached_input_tokens, 75); assert.equal(row.total_tokens, 215); assert.equal(row.reported_cost_usd, 0.42);
+  target.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('rebuilds OpenCode projection and reports source sessions separately from segments', () => {
+  const directory = temp(), sourceFile = path.join(directory, 'opencode.db'), target = openDatabase(path.join(directory, 'usage.sqlite'));
+  const source = new DatabaseSync(sourceFile);
+  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); CREATE TABLE message (session_id TEXT, data TEXT); INSERT INTO session VALUES ('live','p1',NULL,'C:/demo','build','{"id":"gpt-5.6-luna","providerID":"openai"}',0,0,0,0,0,0,0); INSERT INTO session VALUES ('child','p1','live','C:/demo','explore','{"id":"gpt-5.6-luna","providerID":"openai"}',0,0,0,0,0,0,0);`);
+  const message = (modelID, created, total) => JSON.stringify({ modelID, time: { created }, tokens: { input: total, output: 0, reasoning: 0, cache: { read: 0 } } });
+  source.exec("INSERT INTO project VALUES ('p1','Demo')");
+  source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('live', message('gpt-5.6-luna', Date.parse('2026-09-17T10:00:00Z'), 100));
+  source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('live', message('gpt-5.6-sol', Date.parse('2026-09-18T10:00:00Z'), 200));
+  source.close();
+  importSessions(target, [{ platform: 'opencode', agent: 'OpenCode', id: 'opencode:deleted', sourcePath: 'deleted', input: 999, total: 999 }]);
+  const result = collectOpenCode(target, { file: sourceFile });
+  assert.equal(result.sourceSessions, 1);
+  assert.equal(result.imported, 3);
+  assert.equal(target.prepare("SELECT COUNT(*) n FROM sessions WHERE platform='opencode'").get().n, 3);
+  assert.equal(target.prepare("SELECT COUNT(*) n FROM sessions WHERE id='opencode:deleted'").get().n, 0);
+  assert.deepEqual(target.prepare("SELECT model, total_tokens FROM sessions WHERE platform='opencode' ORDER BY model, total_tokens").all().map((row) => ({ ...row })), [
+    { model: 'gpt-5.6-luna', total_tokens: 0 },
+    { model: 'gpt-5.6-luna', total_tokens: 100 },
+    { model: 'gpt-5.6-sol', total_tokens: 200 },
+  ]);
   target.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 
@@ -123,10 +146,28 @@ test('counts per-file deltas for resumed Codex sessions sharing cumulative count
   fs.writeFileSync(path.join(root, 'rollout-a_ffff.jsonl'), [...head, usage(100, '2026-09-17T12:00:00Z'), usage(250, '2026-09-17T13:00:00Z')].map(JSON.stringify).join('\n'));
   fs.writeFileSync(path.join(root, 'rollout-a_eeee.jsonl'), [...head, usage(250, '2026-09-17T14:00:00Z'), usage(250, '2026-09-17T15:00:00Z')].map(JSON.stringify).join('\n')); // reprise qui ré-émet le cumulé : delta 0
   const db = openDatabase(path.join(directory, 'usage.sqlite'));
-  collectCodex(db, { root });
+  const result = collectCodex(db, { root });
+  assert.equal(result.sourceSessions, 1);
   assert.equal(db.prepare("SELECT SUM(total_tokens) n FROM sessions WHERE platform='codex'").get().n, 250); // 100 + 150 + 0, pas 600
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sessions WHERE platform='codex'").get().n, 2); // le fichier fantôme (delta 0) ne crée pas de doublon utile
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('splits Codex deltas across Paris calendar days', () => {
+  const directory = temp(), file = path.join(directory, 'rollout-cross-day.jsonl');
+  const usage = (total, at) => ({ timestamp: at, type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: total, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: total } } } });
+  const rows = [
+    { timestamp: '2026-09-17T21:58:00Z', type: 'session_meta', payload: { session_id: 'cross-day', timestamp: '2026-09-17T21:58:00Z', cwd: 'C:/x', originator: 'Codex CLI' } },
+    { timestamp: '2026-09-17T21:58:00Z', type: 'turn_context', payload: { model: 'gpt-test' } },
+    usage(0, '2026-09-17T21:58:00Z'), usage(100, '2026-09-17T21:59:00Z'), usage(250, '2026-09-17T22:01:00Z'),
+  ];
+  fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
+  const parsed = parseCodexSession(file);
+  assert.deepEqual(parsed.map((row) => [row.startedAt, row.total]), [
+    ['2026-09-17T12:00:00.000Z', 100],
+    ['2026-09-18T12:00:00.000Z', 150],
+  ]);
+  fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test('applies project override for the referenced-chatgpt handoff session', () => {

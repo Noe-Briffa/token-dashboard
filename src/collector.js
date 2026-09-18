@@ -106,11 +106,8 @@ const applyProjectOverride = (project) => {
 
 export function parseCodexSession(file) {
   let meta = {}, startedAt = null, endedAt = null;
-  // Compteurs cumulatifs par session, ré-émis dans chaque fichier de reprise :
-  // l'usage réel du fichier = delta interne (max − min), jamais le brut (sinon compté N fois).
-  let lo = null;
-  let hi = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
   const snap = (candidate) => ({ input: integer(candidate.input_tokens), cached: integer(candidate.cached_input_tokens), output: integer(candidate.output_tokens), reasoning: integer(candidate.reasoning_output_tokens), total: integer(candidate.total_tokens) });
+  const snapshots = [];
   const modelSeq = [];
   let currentModel = null;
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -126,51 +123,41 @@ export function parseCodexSession(file) {
       if (!modelSeq.includes(currentModel)) modelSeq.push(currentModel);
     }
     const candidate = record.payload?.info?.total_token_usage;
-    if (candidate) {
-      const s = snap(candidate);
-      if (!lo || s.total < lo.total) lo = s;
-      if (s.total >= hi.total) hi = s;
-    }
+    if (candidate) snapshots.push({ stamp, usage: snap(candidate), model: currentModel });
   }
-  const usage = {
-    input: Math.max(0, hi.input - (lo?.input || 0)),
-    cached: Math.max(0, hi.cached - (lo?.cached || 0)),
-    output: Math.max(0, hi.output - (lo?.output || 0)),
-    reasoning: Math.max(0, hi.reasoning - (lo?.reasoning || 0)),
-    total: Math.max(0, hi.total - (lo?.total || 0)),
-  };
-  const sessionStart = meta.timestamp || startedAt;
-  const start = timestampMs(sessionStart), end = timestampMs(endedAt);
   const stem = path.basename(file, '.jsonl'); // rollout-<ts>-<uuid>[_<fork>]
   const fork = stem.includes('_') ? stem.slice(stem.lastIndexOf('_') + 1) : '';
   const sessionId = meta.session_id || meta.id || stem;
   const fileId = fork ? `${sessionId}~${fork}` : sessionId; // ids scopés au fichier : deltas disjoints, pas de collision
-  const base = {
-    platform: 'codex', provider: 'openai', id: fileId,
-    agent: meta.originator === 'Codex Desktop' ? 'Codex Desktop' : 'Codex CLI', sourcePath: file,
-    project: applyProjectOverride(meta.cwd), startedAt: sessionStart, endedAt,
-    durationSeconds: start && end ? Math.max(0, Math.round((end - start) / 1000)) : 0,
-  };
-  // ventilation exacte: if multiple models, split tokens per model by turn count (best-effort without per-turn deltas)
-  if (modelSeq.length > 1) {
-    const per = Math.floor(usage.total / modelSeq.length);
-    const remainder = usage.total - per * modelSeq.length;
-    return modelSeq.map((m, idx) => normalizeSession({
-      ...base,
-      id: `${base.id}:${m}`,
-      sourcePath: `${file}:${m}`,
-      model: m,
-      input: Math.floor(usage.input / modelSeq.length),
-      cached: Math.floor(usage.cached / modelSeq.length),
-      output: Math.floor(usage.output / modelSeq.length),
-      reasoning: Math.floor(usage.reasoning / modelSeq.length),
-      total: per + (idx === 0 ? remainder : 0),
-    }));
+  const fallbackModel = currentModel || meta.model || (modelSeq.length === 1 ? modelSeq[0] : null);
+  const buckets = new Map();
+  let previous = null;
+  for (const snapshot of snapshots) {
+    if (!previous) { previous = snapshot; continue; }
+    if (snapshot.usage.total < previous.usage.total) { previous = snapshot; continue; }
+    const day = snapshot.stamp ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date(snapshot.stamp)) : null;
+    const model = snapshot.model || fallbackModel;
+    const key = `${day || 'unknown'}\u0000${model || ''}`;
+    const delta = buckets.get(key) || { day, model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+    delta.firstAt = delta.firstAt || snapshot.stamp;
+    delta.lastAt = snapshot.stamp || delta.lastAt;
+    for (const field of ['input', 'cached', 'output', 'reasoning', 'total']) delta[field] += Math.max(0, snapshot.usage[field] - previous.usage[field]);
+    buckets.set(key, delta);
+    previous = snapshot;
   }
-  return normalizeSession({
-    ...base,
-    model: currentModel || meta.model || modelSeq[0] || null,
-    ...usage,
+  const base = { platform: 'codex', provider: 'openai', agent: meta.originator === 'Codex Desktop' ? 'Codex Desktop' : 'Codex CLI', project: applyProjectOverride(meta.cwd), sourcePath: file };
+  if (!buckets.size) return normalizeSession({ ...base, id: fileId, model: fallbackModel, startedAt: meta.timestamp || startedAt, endedAt });
+  return [...buckets.values()].map((bucket) => {
+    const isSingle = buckets.size === 1;
+    const dayStamp = bucket.day ? new Date(`${bucket.day}T12:00:00Z`).toISOString() : (meta.timestamp || startedAt);
+    const id = isSingle ? fileId : `${fileId}:${bucket.day || 'unknown'}${bucket.model ? `:${bucket.model}` : ''}`;
+    const start = timestampMs(bucket.firstAt), end = timestampMs(bucket.lastAt);
+    return normalizeSession({
+      ...base, id, sourcePath: isSingle ? file : `${file}:${bucket.day || 'unknown'}:${bucket.model || 'unknown'}`,
+      model: bucket.model, startedAt: dayStamp, endedAt: bucket.lastAt || dayStamp,
+      durationSeconds: start && end ? Math.max(0, Math.round((end - start) / 1000)) : 0,
+      input: bucket.input, cached: bucket.cached, output: bucket.output, reasoning: bucket.reasoning, total: bucket.total,
+    });
   });
 }
 
@@ -195,10 +182,12 @@ export function importSessions(db, sessions) {
 
 export function collectCodex(db, { root = defaultCodexRoot() } = {}) {
   const files = filesUnder(root);
-  const sessions = files.flatMap((f) => {
-    const r = parseCodexSession(f);
-    return Array.isArray(r) ? r : [r];
-  }).filter((r) => r && (r.total || r.input || r.output || r.reasoning || r.cached)); // fichiers fantômes (delta 0) hors table
+    const parsed = files.flatMap((f) => {
+      const r = parseCodexSession(f);
+      return Array.isArray(r) ? r : [r];
+    });
+    const sourceSessions = new Set(parsed.filter(Boolean).map((row) => row.id.split('~')[0].split(':')[0]));
+    const sessions = parsed.filter((r) => r && (r.total || r.input || r.output || r.reasoning || r.cached)); // fichiers fantômes (delta 0) hors table
   db.exec('BEGIN');
   try {
     // Reconstruction complète : les fichiers (deltas disjoints, ids scopés) sont la vérité terrain.
@@ -206,7 +195,7 @@ export function collectCodex(db, { root = defaultCodexRoot() } = {}) {
     if (files.length) db.prepare("DELETE FROM sessions WHERE platform='codex'").run();
     const imported = importSessions(db, sessions);
     db.exec('COMMIT');
-    return { imported, source: root, platform: 'codex' };
+    return { imported, sourceSessions: sourceSessions.size, source: root, platform: 'codex' };
   } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }
 }
 
@@ -272,7 +261,7 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
   try {
     source = new DatabaseSync(file, { readOnly: true });
     const rows = source.prepare(`
-      SELECT s.id, s.directory, s.agent, s.model, s.cost, s.time_created, s.time_updated,
+        SELECT s.id, s.parent_id, s.directory, s.agent, s.model, s.cost, s.time_created, s.time_updated,
         s.tokens_input, s.tokens_output, s.tokens_reasoning, s.tokens_cache_read, p.name project_name
       FROM session s LEFT JOIN project p ON p.id=s.project_id
     `).all();
@@ -292,8 +281,6 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
         try {
           const msgs = source.prepare("SELECT data FROM message WHERE session_id=?").all(row.id);
           if (msgs.length) {
-            // clean old ids for this session (migration vers per-day)
-            try { db.prepare("DELETE FROM sessions WHERE id = ? OR id LIKE ?").run(`opencode:${row.id}`, `opencode:${row.id}:%`); } catch {}
             const perDayModel = new Map();
             for (const m of msgs) {
               let data; try { data = JSON.parse(m.data); } catch { continue; }
@@ -335,7 +322,17 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
         total: integer(row.tokens_input) + integer(row.tokens_cache_read) + integer(row.tokens_output) + integer(row.tokens_reasoning),
       })];
     });
-    return { imported: importSessions(db, sessions), source: file, platform: 'opencode', status: 'connected' };
+    db.exec('BEGIN');
+    try {
+      // Rebuild the projection so deleted source sessions cannot remain in the dashboard.
+      db.prepare("DELETE FROM sessions WHERE platform='opencode'").run();
+      const imported = importSessions(db, sessions);
+      db.exec('COMMIT');
+      return { imported, sourceSessions: rows.filter((row) => !row.parent_id).length, source: file, platform: 'opencode', status: 'connected' };
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   } catch (error) {
     return { imported: 0, source: file, platform: 'opencode', status: 'not_connected', error: error.message };
   } finally { source?.close(); }
