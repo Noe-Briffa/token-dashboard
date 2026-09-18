@@ -2,7 +2,6 @@ const number = new Intl.NumberFormat('fr-FR');
 const compact = new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFractionDigits: 1 });
 const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const shortMoney = (amount) => money.format(amount).replace(/US$/, '').trimEnd();
-let firstLoad = true;
 let modelColors = new Map();
 let platformColors = new Map();
 let projectColors = new Map();
@@ -80,11 +79,6 @@ function mergeByModel(rows) {
     merged.set(label, current);
   }
   return [...merged.values()].sort((a, b) => value(b) - value(a));
-}
-function setOptions(id, values) {
-  const el = $(id), old = el.value, first = el.querySelector('option').outerHTML;
-  el.innerHTML = first + values.map((item) => `<option value="${escape(item)}">${escape(item)}</option>`).join('');
-  el.value = old;
 }
 function setPeriod() {
   const custom = $('#period').value === 'custom';
@@ -317,7 +311,6 @@ async function load(refresh = false) {
   if (refresh) await fetch('/api/refresh', { method: 'POST' });
   const data = await (await fetch(`/api/data?${filterQuery()}`)).json();
   makeColors(data);
-  if (firstLoad) { setOptions('#platform', [...new Set(data.options.map((row) => row.platform))]); setOptions('#agent', [...new Set(data.options.map((row) => row.agent))]); setOptions('#model', [...new Set(data.options.map((row) => row.model).filter(Boolean))]); firstLoad = false; }
   render(data); $('#status').textContent = `${number.format(data.summary.sessions)} sessions · actualisé ${new Date().toLocaleTimeString('fr-FR')}`;
 }
 $('#refresh').onclick = () => { load(true); loadLimits(true); };
