@@ -96,7 +96,11 @@ export function normalizeSession(session) {
 
 export function parseCodexSession(file) {
   let meta = {}, startedAt = null, endedAt = null;
-  let usage = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+  // Compteurs cumulatifs par session, ré-émis dans chaque fichier de reprise :
+  // l'usage réel du fichier = delta interne (max − min), jamais le brut (sinon compté N fois).
+  let lo = null;
+  let hi = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+  const snap = (candidate) => ({ input: integer(candidate.input_tokens), cached: integer(candidate.cached_input_tokens), output: integer(candidate.output_tokens), reasoning: integer(candidate.reasoning_output_tokens), total: integer(candidate.total_tokens) });
   const modelSeq = [];
   let currentModel = null;
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -112,14 +116,27 @@ export function parseCodexSession(file) {
       if (!modelSeq.includes(currentModel)) modelSeq.push(currentModel);
     }
     const candidate = record.payload?.info?.total_token_usage;
-    if (candidate && integer(candidate.total_tokens) >= usage.total) {
-      usage = { input: integer(candidate.input_tokens), cached: integer(candidate.cached_input_tokens), output: integer(candidate.output_tokens), reasoning: integer(candidate.reasoning_output_tokens), total: integer(candidate.total_tokens) };
+    if (candidate) {
+      const s = snap(candidate);
+      if (!lo || s.total < lo.total) lo = s;
+      if (s.total >= hi.total) hi = s;
     }
   }
+  const usage = {
+    input: Math.max(0, hi.input - (lo?.input || 0)),
+    cached: Math.max(0, hi.cached - (lo?.cached || 0)),
+    output: Math.max(0, hi.output - (lo?.output || 0)),
+    reasoning: Math.max(0, hi.reasoning - (lo?.reasoning || 0)),
+    total: Math.max(0, hi.total - (lo?.total || 0)),
+  };
   const sessionStart = meta.timestamp || startedAt;
   const start = timestampMs(sessionStart), end = timestampMs(endedAt);
+  const stem = path.basename(file, '.jsonl'); // rollout-<ts>-<uuid>[_<fork>]
+  const fork = stem.includes('_') ? stem.slice(stem.lastIndexOf('_') + 1) : '';
+  const sessionId = meta.session_id || meta.id || stem;
+  const fileId = fork ? `${sessionId}~${fork}` : sessionId; // ids scopés au fichier : deltas disjoints, pas de collision
   const base = {
-    platform: 'codex', provider: 'openai', id: meta.session_id || meta.id || path.basename(file, '.jsonl'),
+    platform: 'codex', provider: 'openai', id: fileId,
     agent: meta.originator === 'Codex Desktop' ? 'Codex Desktop' : 'Codex CLI', sourcePath: file,
     project: meta.cwd, startedAt: sessionStart, endedAt,
     durationSeconds: start && end ? Math.max(0, Math.round((end - start) / 1000)) : 0,
@@ -167,23 +184,17 @@ export function importSessions(db, sessions) {
 }
 
 export function collectCodex(db, { root = defaultCodexRoot() } = {}) {
-  // Codex écrit une suite de fichiers _<fork> par reprise partageant le même session_id,
-  // chacun avec des compteurs CUMULATIFS => ne garder que le fichier au total max, sinon tout est compté N fois.
-  const bySession = new Map();
-  for (const f of filesUnder(root)) {
-    const parsed = parseCodexSession(f);
-    const rows = (Array.isArray(parsed) ? parsed : [parsed]).filter((r) => r && r.id);
-    if (!rows.length) continue;
-    const key = String(rows[0].id).split(':')[0];
-    const total = rows.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
-    if (!bySession.has(key) || total > bySession.get(key).total) bySession.set(key, { total, rows });
-  }
-  const winners = [...bySession.values()].flatMap((g) => g.rows);
-  const drop = db.prepare("DELETE FROM sessions WHERE platform='codex' AND (id = ? OR id LIKE ? ESCAPE '\\')");
+  const files = filesUnder(root);
+  const sessions = files.flatMap((f) => {
+    const r = parseCodexSession(f);
+    return Array.isArray(r) ? r : [r];
+  }).filter((r) => r && (r.total || r.input || r.output || r.reasoning || r.cached)); // fichiers fantômes (delta 0) hors table
   db.exec('BEGIN');
   try {
-    for (const key of bySession.keys()) drop.run(key, `${key.replace(/[\\%_]/g, (c) => `\\${c}`)}:%`); // purge les fichiers de reprise superseded (auto-répare l'historique gonflé)
-    const imported = importSessions(db, winners);
+    // Reconstruction complète : les fichiers (deltas disjoints, ids scopés) sont la vérité terrain.
+    // Zéro fichier => on ne touche à rien (jamais de perte si ~/.codex absent).
+    if (files.length) db.prepare("DELETE FROM sessions WHERE platform='codex'").run();
+    const imported = importSessions(db, sessions);
     db.exec('COMMIT');
     return { imported, source: root, platform: 'codex' };
   } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }

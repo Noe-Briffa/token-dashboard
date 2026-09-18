@@ -21,9 +21,11 @@ test('migrates existing sessions to codex platform without losing data', () => {
 test('imports Codex usage with platform and normalizes future collector contract', () => {
   const directory = temp(), sessions = path.join(directory, 'sessions', '2026', '08', '31'); fs.mkdirSync(sessions, { recursive: true });
   const file = path.join(sessions, 'rollout-test.jsonl');
+  const usage = (total, cached = 0) => ({ timestamp: '2026-08-31T10:02:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: total, cached_input_tokens: cached, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: total } } } });
   const rows = [
     { timestamp: '2026-08-31T10:00:00Z', type: 'session_meta', payload: { session_id: 'abc', timestamp: '2026-08-31T10:00:00Z', cwd: 'C:/work', originator: 'Codex Desktop' } },
     { timestamp: '2026-08-31T10:01:00Z', type: 'turn_context', payload: { model: 'gpt-test' } },
+    usage(0),
     { timestamp: '2026-08-31T10:02:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 60, output_tokens: 20, reasoning_output_tokens: 10, total_tokens: 130 } } } }
   ]; fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
   const db = openDatabase(path.join(directory, 'usage.sqlite'));
@@ -111,16 +113,19 @@ test('records limits history throttled with 30-day purge', () => {
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 
-test('counts resumed Codex sessions once using the latest cumulative file', () => {
+test('counts per-file deltas for resumed Codex sessions sharing cumulative counters', () => {
   const directory = temp(), root = path.join(directory, 'sessions'); fs.mkdirSync(root, { recursive: true });
   const meta = { session_id: 'dup-1', timestamp: '2026-09-17T10:00:00Z', cwd: 'C:/x', originator: 'Codex CLI' };
   const turn = { timestamp: '2026-09-17T10:00:00Z', type: 'turn_context', payload: { model: 'gpt-test' } };
-  const usage = (total) => ({ timestamp: '2026-09-17T11:00:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: total, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: total } } } });
-  fs.writeFileSync(path.join(root, 'rollout-a.jsonl'), [{ timestamp: '2026-09-17T10:00:00Z', type: 'session_meta', payload: meta }, turn, usage(100)].map(JSON.stringify).join('\n'));
-  fs.writeFileSync(path.join(root, 'rollout-a_fork.jsonl'), [{ timestamp: '2026-09-17T10:00:00Z', type: 'session_meta', payload: meta }, turn, usage(250)].map(JSON.stringify).join('\n'));
+  const usage = (total, at) => ({ timestamp: at, type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: total, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: total } } } });
+  const head = [{ timestamp: '2026-09-17T10:00:00Z', type: 'session_meta', payload: meta }, turn];
+  fs.writeFileSync(path.join(root, 'rollout-a.jsonl'), [...head, usage(0, '2026-09-17T10:01:00Z'), usage(100, '2026-09-17T11:00:00Z')].map(JSON.stringify).join('\n'));
+  fs.writeFileSync(path.join(root, 'rollout-a_ffff.jsonl'), [...head, usage(100, '2026-09-17T12:00:00Z'), usage(250, '2026-09-17T13:00:00Z')].map(JSON.stringify).join('\n'));
+  fs.writeFileSync(path.join(root, 'rollout-a_eeee.jsonl'), [...head, usage(250, '2026-09-17T14:00:00Z'), usage(250, '2026-09-17T15:00:00Z')].map(JSON.stringify).join('\n')); // reprise qui ré-émet le cumulé : delta 0
   const db = openDatabase(path.join(directory, 'usage.sqlite'));
   collectCodex(db, { root });
-  assert.equal(db.prepare("SELECT SUM(total_tokens) n FROM sessions WHERE platform='codex'").get().n, 250);
+  assert.equal(db.prepare("SELECT SUM(total_tokens) n FROM sessions WHERE platform='codex'").get().n, 250); // 100 + 150 + 0, pas 600
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM sessions WHERE platform='codex'").get().n, 2); // le fichier fantôme (delta 0) ne crée pas de doublon utile
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 
