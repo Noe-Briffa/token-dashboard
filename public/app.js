@@ -92,7 +92,8 @@ function filterQuery() {
   return query;
 }
 function renderDonut(id, totalId, rows, target) {
-  const usable = rows.filter((row) => value(row) > 0), total = usable.reduce((sum, row) => sum + value(row), 0);
+  const usable = rows.filter((row) => value(row) > 0).sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0)); // ordre tokens stable : couleurs et positions fixes entre Tokens et Coût
+  const total = usable.reduce((sum, row) => sum + value(row), 0);
   const totalEl = $(`#${totalId}`);
   if (totalEl) totalEl.textContent = formatted(total);
   if (!total) { $(`#${id}`).innerHTML = '<span class="muted">Aucune donnée chiffrable.</span>'; return; }
