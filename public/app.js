@@ -280,15 +280,14 @@ function renderSplit(s) {
   const parts = [['Input', 'input', Number(s.input) || 0, 'var(--blue)'], ['Cache', 'cached', Number(s.cached) || 0, 'var(--ink-muted)'], ['Output', 'output', Number(s.output) || 0, 'var(--accent)'], ['Raisonnement', 'reasoning', Number(s.reasoning) || 0, 'var(--violet)']];
   const total = parts.reduce((sum, [, , value]) => sum + value, 0);
   const pct = (value, of) => value && of ? `${(value / of * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '0 %';
-  if (!total) { $('#split-bar').innerHTML = ''; $('#split-legend').innerHTML = '<span class="muted">Aucune donnée.</span>'; return; }
+  if (!total) { $('#split-bar').innerHTML = ''; $('#split-costbar').innerHTML = ''; $('#split-legend').innerHTML = '<span class="muted">Aucune donnée.</span>'; return; }
   const track = (items, tip) => `<div class="split-track">${items.map(([label, value, color, denom]) => value > 0 ? `<i style="width:${value / denom * 100}%;background:${color}" data-tip="${escape(tip(label, value, denom))}"></i>` : '').join('')}</div>`;
   const costParts = parts.map(([label, key, , color]) => [label, Number(s[`${key}_${mode}_cost`]) || 0, color]);
   const costTotal = costParts.reduce((sum, [, value]) => sum + value, 0);
-  const costRow = costTotal
-    ? track(costParts.map(([label, value, color]) => [label, value, color, costTotal]), (label, value, denom) => `${label} : ${money.format(value)} (${pct(value, denom)})`)
+  $('#split-bar').innerHTML = `<div class="split-row"><span class="split-rowlabel">Tokens</span>${track(parts.map(([label, , value, color]) => [label, value, color, total]), (label, value, denom) => `${label} : ${compact.format(value)} (${pct(value, denom)})`)}</div>`;
+  $('#split-costbar').innerHTML = costTotal
+    ? `<div class="split-row"><span class="split-rowlabel">${escape(modeLabel())}</span>${track(costParts.map(([label, value, color]) => [label, value, color, costTotal]), (label, value, denom) => `${label} : ${money.format(value)} (${pct(value, denom)})`)}</div>`
     : '<span class="muted">Aucun coût sur la période.</span>';
-  $('#split-bar').innerHTML = `<div class="split-row"><span class="split-rowlabel">Tokens</span>${track(parts.map(([label, , value, color]) => [label, value, color, total]), (label, value, denom) => `${label} : ${compact.format(value)} (${pct(value, denom)})`)}</div>`
-    + `<div class="split-row"><span class="split-rowlabel">${escape(modeLabel())}</span>${costRow}</div>`;
   $('#split-legend').innerHTML = parts.map(([label, key, value, color]) => `<span class="split-key"><i class="dot" style="background:${color}"></i><span class="split-keycol"><span><label>${escape(label)}</label> <small>${compact.format(value)} · ${pct(value, total)}</small></span><small class="split-cost">${money.format(Number(s[`${key}_${mode}_cost`]) || 0)}</small></span></span>`).join('');
 }
 function renderSources(sources) { $('#sources').innerHTML = sources.map((source) => `<span class="source"><i class="status-dot ${source.status === 'connected' ? 'connected' : ''}"></i><b>${escape(source.platform)}</b><span class="muted">${source.status === 'connected' ? `${number.format(source.sessions)} sessions` : 'non connecté'}</span></span>`).join(''); }

@@ -196,6 +196,7 @@ input::placeholder { color: var(--ink-muted); }
 .split-row + .split-row { margin-top: 8px; }
 .split-row .split-track { flex: 1; }
 .split-rowlabel { flex: none; width: 110px; color: var(--ink-muted); font-size: 11px; }
+#split-costbar { margin-top: 10px; }
 .split-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; }
 .split-key { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; }
 .split-key .dot { display: inline-block; margin-top: 4px; }
