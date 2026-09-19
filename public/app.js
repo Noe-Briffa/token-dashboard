@@ -203,7 +203,7 @@ const heatThresholds = [20e6, 40e6, 60e6, 80e6];
 function renderActivityHeatmap(cells = [], activityVersion = 0) {
   const el = $('#activity-heatmap'), summary = $('#activity-summary'), legend = $('#activity-legend');
   if (!el) return;
-  if (legend) legend.innerHTML = `<strong>Tokens par cellule</strong><i class="heat-empty"></i><span>0</span>${heatThresholds.map((threshold, index) => `<i class="heat-level-${index + 1}"></i><span>${index === heatThresholds.length - 1 ? '> 80 M' : `≤ ${threshold / 1e6} M`}</span>`).join('')}<span class="activity-total-note">Ligne Total : relatif au pic horaire</span>`;
+  if (legend) legend.innerHTML = `<strong>Tokens par cellule</strong><i class="heat-empty"></i><span>0</span>${heatThresholds.map((threshold, index) => `<i class="heat-level-${index + 1}"></i><span>${index === heatThresholds.length - 1 ? '> 80 M' : `≤ ${threshold / 1e6} M`}</span>`).join('')}<span class="activity-total-note">Totaux : échelle relative à leur maximum</span>`;
   if (activityVersion !== 2 || !Array.isArray(cells) || cells.length !== 168) {
     el.innerHTML = '<p class="muted activity-empty">Redémarre l’application pour actualiser l’historique horaire.</p>';
     if (summary) summary.textContent = 'Version serveur à actualiser';
@@ -215,6 +215,14 @@ function renderActivityHeatmap(cells = [], activityVersion = 0) {
   const hourTotals = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, sessions: 0 }));
   for (const cell of cells) { hourTotals[cell.hour].total += Number(cell.total) || 0; hourTotals[cell.hour].sessions += Number(cell.sessions) || 0; }
   const hourPeak = hourTotals.reduce((best, cell) => cell.total > best.total ? cell : best, hourTotals[0]);
+  const dayTotals = activityDayNames.map((day, dayIndex) => cells.slice(dayIndex * 24, dayIndex * 24 + 24).reduce((total, cell) => ({
+    day,
+    dayIndex,
+    total: total.total + (Number(cell.total) || 0),
+    sessions: total.sessions + (Number(cell.sessions) || 0),
+  }), { day, dayIndex, total: 0, sessions: 0 }));
+  const dayPeak = dayTotals.reduce((best, day) => day.total > best.total ? day : best, dayTotals[0]);
+  const periodTotal = dayTotals.reduce((total, day) => ({ total: total.total + day.total, sessions: total.sessions + day.sessions }), { total: 0, sessions: 0 });
   if (summary) summary.textContent = `Pic jour : ${activityDayNames[peak.dayIndex]} ${String(peak.hour).padStart(2, '0')} h · ${compact.format(max)} tokens · Pic horaire : ${String(hourPeak.hour).padStart(2, '0')} h · ${compact.format(hourPeak.total)} tokens`;
   const hourLabels = Array.from({ length: 24 }, (_, hour) => `<span class="activity-hour">${hour % 6 === 0 ? `${String(hour).padStart(2, '0')} h` : ''}</span>`).join('');
   const renderCell = (cell, label, extraClass = '', scaleMax = null) => {
@@ -222,14 +230,17 @@ function renderActivityHeatmap(cells = [], activityVersion = 0) {
     return `<span class="heat-cell heat-level-${level}${extraClass}" role="img" aria-label="${escape(label)}" data-tip="${escape(label)}"></span>`;
   };
   const rows = activityDayNames.map((day, dayIndex) => {
+    const dayTotal = dayTotals[dayIndex];
     const row = cells.slice(dayIndex * 24, dayIndex * 24 + 24).map((cell) => {
       const label = `${day} ${String(cell.hour).padStart(2, '0')} h : ${compact.format(Number(cell.total) || 0)} tokens · ${number.format(cell.sessions)} session${cell.sessions === 1 ? '' : 's'}`;
       return renderCell(cell, label);
     }).join('');
-    return `<span class="activity-day">${day}</span>${row}`;
+    const label = `${day} · total : ${compact.format(dayTotal.total)} tokens · ${number.format(dayTotal.sessions)} sessions`;
+    return `<span class="activity-day">${day}</span>${row}${renderCell(dayTotal, label, ' activity-day-total-cell', dayPeak.total)}`;
   }).join('');
   const totalRow = hourTotals.map((cell) => renderCell(cell, `${String(cell.hour).padStart(2, '0')} h · total : ${compact.format(cell.total)} tokens · ${number.format(cell.sessions)} sessions`, ' activity-total-cell', hourPeak.total)).join('');
-  el.innerHTML = `<div class="activity-grid"><span class="activity-corner"></span>${hourLabels}${rows}<span class="activity-total-day">Total</span>${totalRow}</div>`;
+  const periodLabel = `Total période : ${compact.format(periodTotal.total)} tokens · ${number.format(periodTotal.sessions)} sessions`;
+  el.innerHTML = `<div class="activity-grid"><span class="activity-corner"></span>${hourLabels}<span class="activity-total-hour">Total</span>${rows}<span class="activity-total-day">Total</span>${totalRow}${renderCell(periodTotal, periodLabel, ' activity-total-cell', periodTotal.total)}</div>`;
 }
 function renderAdtention(balance) {
   const el = $('#adtention-earnings');
