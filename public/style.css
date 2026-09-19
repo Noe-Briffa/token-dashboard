@@ -267,8 +267,8 @@ button.head-toggle:hover { color: var(--ink); background: none; border: none; te
 .heat-cell:focus-visible { outline: 3px solid color-mix(in oklch, var(--accent) 38%, transparent); outline-offset: 1px; }
 .heat-level-1 { background: oklch(92% 0.08 85); border-color: oklch(84% 0.1 85); }
 .heat-level-2 { background: oklch(78% 0.14 72); border-color: oklch(68% 0.15 72); }
-.heat-level-3 { background: var(--amber); border-color: color-mix(in oklch, var(--amber) 75%, var(--ink)); }
-.heat-level-4 { background: var(--coral); border-color: color-mix(in oklch, var(--coral) 75%, var(--ink)); }
+.heat-level-3 { background: var(--amber); border-color: color-mix(in oklch, var(--amber) 75%, oklch(30% 0.04 82)); }
+.heat-level-4 { background: var(--coral); border-color: color-mix(in oklch, var(--coral) 75%, oklch(30% 0.04 32)); }
 .heat-level-5 { background: oklch(52% 0.18 28); border-color: oklch(45% 0.18 28); }
 .activity-legend { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 6px; margin-top: 10px; color: var(--ink-muted); font-size: 10px; }
 .activity-legend strong { margin-right: 4px; color: var(--ink); font-size: 10px; }

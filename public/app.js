@@ -238,11 +238,6 @@ function renderAdtention(balance) {
   const note = balance.billableImpressions == null ? '' : `${number.format(balance.billableImpressions)} impressions rémunérées`;
   el.innerHTML = `<span><b>Gains ADtention</b>${note ? `<small>${note}</small>` : ''}</span><strong>${money.format(Number(balance.balanceUsd) || 0)}</strong>`;
 }
-function renderSessions(rows, sourceCount) {
-  const field = $('#cost-mode').value === 'api_cost' ? 'api_estimated_cost_usd' : 'out_of_pocket_cost_usd';
-  $('#session-count').textContent = `${number.format(sourceCount ?? rows.length)} sessions`;
-  $('#sessions').innerHTML = rows.map((row) => `<tr><td>${escape(row.id.slice(0, 8))}</td><td>${escape(row.platform)}<br><span class="muted">${escape(row.agent)}</span></td><td>${escape(row.model || 'Inconnu')}</td><td class="project" data-tip="${escape(row.project || '')}">${escape(row.project || '—')}</td><td>${duration(row.duration_seconds)}</td><td>${number.format(row.input_tokens)}</td><td>${number.format(row.cached_input_tokens)}</td><td>${number.format(row.output_tokens + row.reasoning_tokens)}</td><td><b>${number.format(row.total_tokens)}</b></td><td>${row[field] == null ? '—' : money.format(row[field])}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">Aucune session.</td></tr>';
-}
 function renderPricing(rows) {
   $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td>${escape(row.platform)}</td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="text" inputmode="decimal" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
 }
@@ -374,7 +369,7 @@ function render(data) {
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderActivityHeatmap(data.activity, data.activityVersion); renderAdtention(data.adtention); renderSessions(data.sessions, s.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderActivityHeatmap(data.activity, data.activityVersion); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 let loadVersion = 0;
 let refreshPromise = null;
