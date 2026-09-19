@@ -164,9 +164,10 @@ test('splits Codex deltas across Paris calendar days', () => {
   fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
   const parsed = parseCodexSession(file);
   assert.deepEqual(parsed.map((row) => [row.startedAt, row.total]), [
-    ['2026-09-17T12:00:00.000Z', 100],
-    ['2026-09-18T12:00:00.000Z', 150],
+    ['2026-09-17T21:59:00Z', 100],
+    ['2026-09-17T22:01:00Z', 150],
   ]);
+  assert.deepEqual(parsed.map((row) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date(row.startedAt))), ['2026-09-17', '2026-09-18']);
   fs.rmSync(directory, { recursive: true, force: true });
 });
 

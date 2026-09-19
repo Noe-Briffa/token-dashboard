@@ -173,6 +173,39 @@ function renderChart(days, range, pricing = []) {
   }).join('');
   $('#chart').innerHTML = `<div class="chart-axis">${ticks.map((tick) => `<span>${isTokens ? compact.format(tick) : money.format(tick)}</span>`).join('')}</div><div class="chart-plot${dense ? ' dense' : ''}"><div class="chart-grid">${ticks.map(() => '<i></i>').join('')}</div><div class="chart-bars${dense ? ' dense' : ''}">${bars}</div></div>`;
 }
+const activityDayNames = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+const heatThresholds = [20e6, 40e6, 60e6, 80e6];
+function renderActivityHeatmap(cells = [], activityVersion = 0) {
+  const el = $('#activity-heatmap'), summary = $('#activity-summary'), legend = $('#activity-legend');
+  if (!el) return;
+  if (legend) legend.innerHTML = `<strong>Tokens par cellule</strong><i class="heat-empty"></i><span>0</span>${heatThresholds.map((threshold, index) => `<i class="heat-level-${index + 1}"></i><span>${index === heatThresholds.length - 1 ? '> 80 M' : `≤ ${threshold / 1e6} M`}</span>`).join('')}<span class="activity-total-note">Ligne Total : relatif au pic horaire</span>`;
+  if (activityVersion !== 2 || !Array.isArray(cells) || cells.length !== 168) {
+    el.innerHTML = '<p class="muted activity-empty">Redémarre l’application pour actualiser l’historique horaire.</p>';
+    if (summary) summary.textContent = 'Version serveur à actualiser';
+    return;
+  }
+  const values = cells.map((cell) => Number(cell.total) || 0), max = Math.max(...values, 0);
+  if (!max) { el.innerHTML = '<p class="muted activity-empty">Aucune activité sur la période.</p>'; if (summary) summary.textContent = 'Tokens utilisés · Europe/Paris'; return; }
+  const peakIndex = values.indexOf(max), peak = cells[peakIndex];
+  const hourTotals = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, sessions: 0 }));
+  for (const cell of cells) { hourTotals[cell.hour].total += Number(cell.total) || 0; hourTotals[cell.hour].sessions += Number(cell.sessions) || 0; }
+  const hourPeak = hourTotals.reduce((best, cell) => cell.total > best.total ? cell : best, hourTotals[0]);
+  if (summary) summary.textContent = `Pic jour : ${activityDayNames[peak.dayIndex]} ${String(peak.hour).padStart(2, '0')} h · ${compact.format(max)} tokens · Pic horaire : ${String(hourPeak.hour).padStart(2, '0')} h · ${compact.format(hourPeak.total)} tokens`;
+  const hourLabels = Array.from({ length: 24 }, (_, hour) => `<span class="activity-hour">${hour % 6 === 0 ? `${String(hour).padStart(2, '0')} h` : ''}</span>`).join('');
+  const renderCell = (cell, label, extraClass = '', scaleMax = null) => {
+    const value = Number(cell.total) || 0, level = value ? scaleMax ? Math.max(1, Math.ceil(value / scaleMax * 5)) : Math.min(5, heatThresholds.findIndex((threshold) => value <= threshold) + 1 || 5) : 0;
+    return `<span class="heat-cell heat-level-${level}${extraClass}" role="img" aria-label="${escape(label)}" data-tip="${escape(label)}"></span>`;
+  };
+  const rows = activityDayNames.map((day, dayIndex) => {
+    const row = cells.slice(dayIndex * 24, dayIndex * 24 + 24).map((cell) => {
+      const label = `${day} ${String(cell.hour).padStart(2, '0')} h : ${compact.format(Number(cell.total) || 0)} tokens · ${number.format(cell.sessions)} session${cell.sessions === 1 ? '' : 's'}`;
+      return renderCell(cell, label);
+    }).join('');
+    return `<span class="activity-day">${day}</span>${row}`;
+  }).join('');
+  const totalRow = hourTotals.map((cell) => renderCell(cell, `${String(cell.hour).padStart(2, '0')} h · total : ${compact.format(cell.total)} tokens · ${number.format(cell.sessions)} sessions`, ' activity-total-cell', hourPeak.total)).join('');
+  el.innerHTML = `<div class="activity-grid"><span class="activity-corner"></span>${hourLabels}${rows}<span class="activity-total-day">Total</span>${totalRow}</div>`;
+}
 function renderAdtention(balance) {
   const el = $('#adtention-earnings');
   if (!el || !balance?.available) { if (el) el.hidden = true; return; }
@@ -180,9 +213,9 @@ function renderAdtention(balance) {
   const note = balance.billableImpressions == null ? '' : `${number.format(balance.billableImpressions)} impressions rémunérées`;
   el.innerHTML = `<span><b>Gains ADtention</b>${note ? `<small>${note}</small>` : ''}</span><strong>${money.format(Number(balance.balanceUsd) || 0)}</strong>`;
 }
-function renderSessions(rows) {
+function renderSessions(rows, sourceCount) {
   const field = $('#cost-mode').value === 'api_cost' ? 'api_estimated_cost_usd' : 'out_of_pocket_cost_usd';
-  $('#session-count').textContent = `${number.format(rows.length)} affichées`;
+  $('#session-count').textContent = `${number.format(sourceCount ?? rows.length)} sessions`;
   $('#sessions').innerHTML = rows.map((row) => `<tr><td>${escape(row.id.slice(0, 8))}</td><td>${escape(row.platform)}<br><span class="muted">${escape(row.agent)}</span></td><td>${escape(row.model || 'Inconnu')}</td><td class="project" data-tip="${escape(row.project || '')}">${escape(row.project || '—')}</td><td>${duration(row.duration_seconds)}</td><td>${number.format(row.input_tokens)}</td><td>${number.format(row.cached_input_tokens)}</td><td>${number.format(row.output_tokens + row.reasoning_tokens)}</td><td><b>${number.format(row.total_tokens)}</b></td><td>${row[field] == null ? '—' : money.format(row[field])}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">Aucune session.</td></tr>';
 }
 function renderPricing(rows) {
@@ -316,7 +349,7 @@ function render(data) {
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAdtention(data.adtention); renderSessions(data.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderActivityHeatmap(data.activity, data.activityVersion); renderAdtention(data.adtention); renderSessions(data.sessions, s.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 let loadVersion = 0;
 let refreshPromise = null;
@@ -373,7 +406,22 @@ const normalizeRate = (input) => {
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');
 };
 $('#pricing-rows').addEventListener('focusout', (event) => { if (event.target.matches('.rate')) normalizeRate(event.target); });
-$('#pricing').addEventListener('submit', async (event) => { event.preventDefault(); const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) })); const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) }); if (!response.ok) { alert((await response.json()).error); return; } await load(); });
+$('#pricing').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.submitter || $('#pricing button'), feedback = $('#pricing-feedback');
+  const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) }));
+  button.disabled = true; button.textContent = 'Enregistrement…'; feedback.textContent = 'Mise à jour en cours'; feedback.classList.add('visible');
+  try {
+    const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) });
+    if (!response.ok) throw new Error((await response.json()).error || 'Enregistrement impossible');
+    await load();
+    button.textContent = 'Prix enregistrés ✓'; feedback.textContent = 'Tarifs mis à jour';
+  } catch (error) {
+    button.textContent = 'Réessayer'; feedback.textContent = error.message;
+  } finally {
+    setTimeout(() => { button.disabled = false; button.textContent = 'Enregistrer prix'; feedback.classList.remove('visible'); }, 1800);
+  }
+});
 let assetStamp = 0, localCommit = null;
 async function checkVersion() {
   try {

@@ -12,6 +12,7 @@ fs.mkdirSync(dataDir, { recursive: true });
 const db = openDatabase(path.join(dataDir, 'usage.sqlite'));
 const estimatedCost = `(s.input_tokens * COALESCE(p.input_usd_per_million,0) + s.cached_input_tokens * COALESCE(p.cached_input_usd_per_million,0) + s.output_tokens * COALESCE(p.output_usd_per_million,0) + s.reasoning_tokens * COALESCE(p.reasoning_usd_per_million,0)) / 1000000.0`;
 const cost = `COALESCE(s.reported_cost_usd, CASE WHEN p.model IS NOT NULL THEN ${estimatedCost} ELSE ${estimatedCost} END)`;
+const ACTIVITY_VERSION = 2;
 let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not_connected' } };
 let adtentionCache = { at: 0, value: null };
 const adtentionApi = (process.env.ADTENTION_API || 'https://api.adtention.ai').replace(/\/+$/, '');
@@ -74,6 +75,24 @@ function calendar(query) {
   for (let d = new Date(`${start}T12:00:00`); parisDateStr(d) <= finish; d.setDate(d.getDate() + 1)) days.push(parisDateStr(d));
   return { start, end, days };
 }
+const activityClock = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Paris', weekday: 'short', hour: '2-digit', hourCycle: 'h23' });
+const activityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+function activityHeatmap(base, params, price) {
+  const cells = activityDays.flatMap((day, dayIndex) => Array.from({ length: 24 }, (_, hour) => ({ day, dayIndex, hour, sessions: 0, total: 0, apiCost: 0, paidCost: 0 })));
+  const rows = db.prepare(`SELECT s.started_at activity_at, s.input_tokens, s.cached_input_tokens, s.output_tokens, s.reasoning_tokens, ${price.api} api_cost, ${price.paid} paid_cost ${base}`).all(...params);
+  for (const row of rows) {
+    const date = new Date(row.activity_at);
+    if (Number.isNaN(date.getTime())) continue;
+    const parts = Object.fromEntries(activityClock.formatToParts(date).map(({ type, value }) => [type, value]));
+    const dayIndex = (activityDays.indexOf(parts.weekday) + 7) % 7, hour = Number(parts.hour);
+    const cell = cells[dayIndex * 24 + hour];
+    cell.sessions++;
+    cell.total += Number(row.input_tokens || 0) + Number(row.cached_input_tokens || 0) + Number(row.output_tokens || 0) + Number(row.reasoning_tokens || 0);
+    cell.apiCost += Number(row.api_cost) || 0;
+    cell.paidCost += Number(row.paid_cost) || 0;
+  }
+  return cells;
+}
 function data(query) {
   const range = calendar(query), ranged = new URLSearchParams(query);
   if (!ranged.get('from')) ranged.set('from', range.start); if (!ranged.get('to')) ranged.set('to', range.end);
@@ -84,6 +103,7 @@ function data(query) {
   const dailyRows = db.prepare(`SELECT date(s.started_at,'localtime') day, COALESCE(s.model,'Modèle inconnu') model, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY day, s.model`).all(...params);
   const byDay = new Map(range.days.map((day) => [day, []])); for (const row of dailyRows) byDay.get(row.day)?.push(row);
   const daily = range.days.map((day) => ({ day, series: byDay.get(day) }));
+  const activity = activityHeatmap(base, params, price);
   const models = db.prepare(`SELECT COALESCE(s.model,'Modèle inconnu') label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.model ORDER BY total DESC`).all(...params);
   const platforms = db.prepare(`SELECT s.platform label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.platform ORDER BY total DESC`).all(...params);
   const projects = db.prepare(`SELECT COALESCE(s.project,'Projet inconnu') label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.project ORDER BY total DESC`).all(...params);
@@ -91,7 +111,7 @@ function data(query) {
   const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
   const sourceRows = db.prepare('SELECT platform, COUNT(*) sessions FROM sessions GROUP BY platform').all();
   const sources = [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceState.codex.sourceSessions ?? (sourceRows.find((row) => row.platform === 'codex')?.sessions || 0) }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceState.opencode.sourceSessions ?? (sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0) }];
-  return { summary: { ...summary, sessions: sources.reduce((total, source) => total + source.sessions, 0) }, sessions, daily, models, platforms, projects, options, pricing, range, sources };
+  return { activityVersion: ACTIVITY_VERSION, summary: { ...summary, sessions: sources.reduce((total, source) => total + source.sessions, 0) }, sessions, daily, activity, models, platforms, projects, options, pricing, range, sources };
 }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');
@@ -137,7 +157,7 @@ const server = http.createServer(async (req, res) => {
       const points = db.prepare("SELECT taken_at t, primary_remaining p, secondary_remaining s FROM limits_history WHERE taken_at >= datetime('now', ?) ORDER BY taken_at").all(`-${days} days`);
       return sendJson(res, { points });
     }
-    if (url.pathname === '/api/version') return sendJson(res, { stamp: Math.max(...['index.html', 'app.js', 'style.css'].map((f) => fs.statSync(path.join(publicDir, f)).mtimeMs)), commit: localCommit });
+    if (url.pathname === '/api/version') return sendJson(res, { stamp: Math.max(...['index.html', 'app.js', 'style.css'].map((f) => fs.statSync(path.join(publicDir, f)).mtimeMs)), commit: localCommit, activityVersion: ACTIVITY_VERSION });
     if (req.method === 'POST' && url.pathname === '/api/update') return sendJson(res, pullUpdate());
     if (url.pathname === '/') return sendFile(res, path.join(publicDir, 'index.html'));
     if (url.pathname === '/app.js') return sendFile(res, path.join(publicDir, 'app.js'));

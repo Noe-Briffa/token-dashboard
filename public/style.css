@@ -254,6 +254,28 @@ button.head-toggle:hover { color: var(--ink); background: none; border: none; te
 .chart-grid i { display: block; border-top: 1px solid color-mix(in oklch, var(--line) 70%, transparent); }
 .chart-bars { position: absolute; inset: 24px 0 20px; display: flex; align-items: stretch; gap: 7px; width: 100%; min-width: 0; height: auto; padding: 0 2px; }
 .chart-bars.dense { min-width: 100%; }
+.activity-panel { overflow: hidden; }
+.activity-heatmap-wrap { overflow-x: auto; padding-bottom: 4px; }
+.activity-grid { display: grid; grid-template-columns: 64px repeat(24, minmax(18px, 1fr)); gap: 4px; min-width: 760px; }
+.activity-corner { min-height: 16px; }
+.activity-hour { min-height: 16px; color: var(--ink-muted); font-size: 10px; font-variant-numeric: tabular-nums; text-align: center; }
+.activity-day { display: flex; align-items: center; color: var(--ink-muted); font-size: 11px; }
+.activity-total-day { display: flex; align-items: center; margin-top: 6px; color: var(--ink); font-size: 11px; font-weight: 800; }
+.heat-cell { min-height: 22px; background: var(--surface-muted); border: 1px solid var(--line); border-radius: 5px; }
+.activity-total-cell { min-height: 26px; margin-top: 6px; border-color: var(--line-strong); }
+.heat-cell[data-tip] { cursor: help; }
+.heat-cell:focus-visible { outline: 3px solid color-mix(in oklch, var(--accent) 38%, transparent); outline-offset: 1px; }
+.heat-level-1 { background: oklch(92% 0.08 85); border-color: oklch(84% 0.1 85); }
+.heat-level-2 { background: oklch(78% 0.14 72); border-color: oklch(68% 0.15 72); }
+.heat-level-3 { background: var(--amber); border-color: color-mix(in oklch, var(--amber) 75%, var(--ink)); }
+.heat-level-4 { background: var(--coral); border-color: color-mix(in oklch, var(--coral) 75%, var(--ink)); }
+.heat-level-5 { background: oklch(52% 0.18 28); border-color: oklch(45% 0.18 28); }
+.activity-legend { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 6px; margin-top: 10px; color: var(--ink-muted); font-size: 10px; }
+.activity-legend strong { margin-right: 4px; color: var(--ink); font-size: 10px; }
+.activity-total-note { margin-left: 8px; color: var(--ink-muted); font-style: italic; }
+.activity-legend i { width: 14px; height: 14px; border: 1px solid var(--line); border-radius: 4px; }
+.activity-legend i.heat-empty { background: var(--surface-muted); }
+.activity-empty { padding: 30px 0; text-align: center; }
 .bar { position: relative; display: flex; flex: 1 1 0; flex-direction: column-reverse; align-items: stretch; justify-content: flex-start; min-width: 0; height: 100%; }
 .bar-api { position: absolute; top: -18px; left: 50%; z-index: 2; overflow: hidden; width: max-content; max-width: 110px; padding: 1px 4px; color: var(--ink-muted); background: color-mix(in oklch, var(--surface) 88%, transparent); border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 1.15; transform: translateX(-50%); white-space: nowrap; }
 .bar-segment { display: block; flex: 0 0 auto; width: 100%; min-height: 1px; border-radius: 0; opacity: .9; }
@@ -299,7 +321,10 @@ tbody tr:hover td { background: var(--surface-muted); }
 td.project { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .settings-note { margin-top: 8px; }
 #pricing { margin-top: 16px; }
-#pricing button { margin-top: 14px; }
+.pricing-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+#pricing button { margin-top: 0; }
+.action-feedback { color: var(--accent); font-size: 11px; opacity: 0; transition: opacity 180ms ease-out; }
+.action-feedback.visible { opacity: 1; }
 .rate { width: 100px; }
 .sources { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .sources h2 { flex: 0 0 auto; }

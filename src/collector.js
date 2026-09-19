@@ -81,6 +81,7 @@ function filesUnder(root) {
 
 const integer = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const timestampMs = (value) => Number.isNaN(Date.parse(value || '')) ? null : Date.parse(value);
+const parisHour = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: '2-digit', hourCycle: 'h23' });
 
 // Contract shared by current Codex collector and future OpenCode/Claude collectors.
 export function normalizeSession(session) {
@@ -136,9 +137,10 @@ export function parseCodexSession(file) {
     if (!previous) { previous = snapshot; continue; }
     if (snapshot.usage.total < previous.usage.total) { previous = snapshot; continue; }
     const day = snapshot.stamp ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date(snapshot.stamp)) : null;
+    const hour = snapshot.stamp ? parisHour.format(new Date(snapshot.stamp)) : null;
     const model = snapshot.model || fallbackModel;
-    const key = `${day || 'unknown'}\u0000${model || ''}`;
-    const delta = buckets.get(key) || { day, model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+    const key = `${day || 'unknown'}\u0000${hour || ''}\u0000${model || ''}`;
+    const delta = buckets.get(key) || { day, hour, model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
     delta.firstAt = delta.firstAt || snapshot.stamp;
     delta.lastAt = snapshot.stamp || delta.lastAt;
     for (const field of ['input', 'cached', 'output', 'reasoning', 'total']) delta[field] += Math.max(0, snapshot.usage[field] - previous.usage[field]);
@@ -150,11 +152,11 @@ export function parseCodexSession(file) {
   return [...buckets.values()].map((bucket) => {
     const isSingle = buckets.size === 1;
     const dayStamp = bucket.day ? new Date(`${bucket.day}T12:00:00Z`).toISOString() : (meta.timestamp || startedAt);
-    const id = isSingle ? fileId : `${fileId}:${bucket.day || 'unknown'}${bucket.model ? `:${bucket.model}` : ''}`;
+    const id = isSingle ? fileId : `${fileId}:${bucket.day || 'unknown'}${bucket.hour ? `:${bucket.hour}` : ''}${bucket.model ? `:${bucket.model}` : ''}`;
     const start = timestampMs(bucket.firstAt), end = timestampMs(bucket.lastAt);
     return normalizeSession({
-      ...base, id, sourcePath: isSingle ? file : `${file}:${bucket.day || 'unknown'}:${bucket.model || 'unknown'}`,
-      model: bucket.model, startedAt: dayStamp, endedAt: bucket.lastAt || dayStamp,
+      ...base, id, sourcePath: isSingle ? file : `${file}:${bucket.day || 'unknown'}:${bucket.hour || 'unknown'}:${bucket.model || 'unknown'}`,
+      model: bucket.model, startedAt: bucket.firstAt || dayStamp, endedAt: bucket.lastAt || dayStamp,
       durationSeconds: start && end ? Math.max(0, Math.round((end - start) / 1000)) : 0,
       input: bucket.input, cached: bucket.cached, output: bucket.output, reasoning: bucket.reasoning, total: bucket.total,
     });
@@ -289,9 +291,12 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
               const t = data.tokens || {};
               const ts = data.time?.created || data.time?.completed || row.time_created;
               const localDay = ts ? new Date(Number(ts)).toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' }) : null;
-              const key = localDay ? `${mid}__${localDay}` : mid;
-              const cur = perDayModel.get(key) || { provider: prov, model: mid, day: localDay, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+              const localHour = ts ? parisHour.format(new Date(Number(ts))) : null;
+              const key = localDay ? `${mid}__${localDay}__${localHour || ''}` : mid;
+              const cur = perDayModel.get(key) || { provider: prov, model: mid, day: localDay, hour: localHour, firstAt: ts, lastAt: ts, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
               cur.provider = prov || cur.provider;
+              if (ts != null && (cur.firstAt == null || ts < cur.firstAt)) cur.firstAt = ts;
+              if (ts != null && (cur.lastAt == null || ts > cur.lastAt)) cur.lastAt = ts;
               cur.input += integer(t.input);
               cur.cached += integer(t.cache?.read);
               cur.output += integer(t.output);
@@ -302,9 +307,9 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
             if (perDayModel.size) {
               return [...perDayModel.values()].map((agg) => {
                 const day = agg.day || iso(row.time_created)?.slice(0,10);
-                const id = agg.day ? `opencode:${row.id}:${agg.model}:${agg.day}` : `opencode:${row.id}:${agg.model}`;
-                const startedAt = agg.day ? new Date(`${agg.day}T12:00:00+02:00`).toISOString() : base.startedAt;
-                const endedAt = startedAt;
+                const id = agg.day ? `opencode:${row.id}:${agg.model}:${agg.day}:${agg.hour || 'unknown'}` : `opencode:${row.id}:${agg.model}`;
+                const startedAt = agg.firstAt != null ? iso(agg.firstAt) : (agg.day ? new Date(`${agg.day}T12:00:00+02:00`).toISOString() : base.startedAt);
+                const endedAt = agg.lastAt != null ? iso(agg.lastAt) : startedAt;
                 return normalizeSession({
                   ...base, provider: agg.provider, id, sourcePath: id,
                   model: agg.model, startedAt, endedAt,
