@@ -173,6 +173,13 @@ function renderChart(days, range, pricing = []) {
   }).join('');
   $('#chart').innerHTML = `<div class="chart-axis">${ticks.map((tick) => `<span>${isTokens ? compact.format(tick) : money.format(tick)}</span>`).join('')}</div><div class="chart-plot${dense ? ' dense' : ''}"><div class="chart-grid">${ticks.map(() => '<i></i>').join('')}</div><div class="chart-bars${dense ? ' dense' : ''}">${bars}</div></div>`;
 }
+function renderAdtention(balance) {
+  const el = $('#adtention-earnings');
+  if (!el || !balance?.available) { if (el) el.hidden = true; return; }
+  el.hidden = false;
+  const note = balance.billableImpressions == null ? '' : `${number.format(balance.billableImpressions)} impressions rémunérées`;
+  el.innerHTML = `<span><b>Gains ADtention</b>${note ? `<small>${note}</small>` : ''}</span><strong>${money.format(Number(balance.balanceUsd) || 0)}</strong>`;
+}
 function renderSessions(rows) {
   const field = $('#cost-mode').value === 'api_cost' ? 'api_estimated_cost_usd' : 'out_of_pocket_cost_usd';
   $('#session-count').textContent = `${number.format(rows.length)} affichées`;
@@ -311,11 +318,12 @@ function render(data) {
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderSessions(data.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAdtention(data.adtention); renderSessions(data.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 async function load(refresh = false) {
   if (refresh) await fetch('/api/refresh', { method: 'POST' });
-  const data = await (await fetch(`/api/data?${filterQuery()}`)).json();
+  const [dataResponse, adtentionResponse] = await Promise.all([fetch(`/api/data?${filterQuery()}`), fetch('/api/adtention/balance')]);
+  const data = await dataResponse.json(); data.adtention = await adtentionResponse.json();
   makeColors(data);
   render(data); $('#status').textContent = `${number.format(data.summary.sessions)} sessions · actualisé ${new Date().toLocaleTimeString('fr-FR')}`;
 }

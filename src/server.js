@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -12,8 +13,28 @@ const db = openDatabase(path.join(dataDir, 'usage.sqlite'));
 const estimatedCost = `(s.input_tokens * COALESCE(p.input_usd_per_million,0) + s.cached_input_tokens * COALESCE(p.cached_input_usd_per_million,0) + s.output_tokens * COALESCE(p.output_usd_per_million,0) + s.reasoning_tokens * COALESCE(p.reasoning_usd_per_million,0)) / 1000000.0`;
 const cost = `COALESCE(s.reported_cost_usd, CASE WHEN p.model IS NOT NULL THEN ${estimatedCost} ELSE ${estimatedCost} END)`;
 let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not_connected' } };
+let adtentionCache = { at: 0, value: null };
+const adtentionApi = (process.env.ADTENTION_API || 'https://api.adtention.ai').replace(/\/+$/, '');
 
 function refresh() { const result = { codex: collectCodex(db), opencode: collectOpenCode(db) }; sourceState = result; return result; }
+async function adtentionBalance() {
+  if (Date.now() - adtentionCache.at < 15000) return adtentionCache.value;
+  const kvFile = path.join(os.homedir(), '.local', 'state', 'opencode', 'kv.json');
+  let kv;
+  try { kv = JSON.parse(fs.readFileSync(kvFile, 'utf8')); } catch { adtentionCache = { at: Date.now(), value: null }; return null; }
+  const publisherId = kv['adtention:identity']?.publisher_id;
+  if (!publisherId) { adtentionCache = { at: Date.now(), value: null }; return null; }
+  const fallback = Number(kv['adtention:balance']);
+  try {
+    const response = await fetch(`${adtentionApi}/v1/balance?publisher_id=${encodeURIComponent(publisherId)}`, { signal: AbortSignal.timeout(5000) });
+    const body = await response.json();
+    if (!response.ok || typeof body.balance_usd !== 'number') throw new Error('ADtention balance unavailable');
+    adtentionCache = { at: Date.now(), value: { available: true, balanceUsd: body.balance_usd, billableImpressions: body.billable_impressions ?? null } };
+  } catch {
+    adtentionCache = { at: Date.now(), value: Number.isFinite(fallback) ? { available: true, balanceUsd: fallback, billableImpressions: null, stale: true } : null };
+  }
+  return adtentionCache.value;
+}
 function subscriptionEnabled() { return db.prepare("SELECT value FROM app_settings WHERE key='openai_subscription'").get()?.value === 'true'; }
 function costs() {
   const api = estimatedCost;
@@ -108,6 +129,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   try {
     if (req.method === 'POST' && url.pathname === '/api/refresh') return sendJson(res, refresh());
+    if (url.pathname === '/api/adtention/balance') return sendJson(res, await adtentionBalance());
     if (req.method === 'POST' && url.pathname === '/api/pricing') return sendJson(res, savePricing(await readBody(req)));
     if (url.pathname === '/api/data') return sendJson(res, data(url.searchParams));
     if (url.pathname === '/api/limits') { const limits = await collectCodexLimits(); recordLimitsHistory(db, limits); return sendJson(res, limits); }

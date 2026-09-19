@@ -98,6 +98,11 @@ main { padding: 0 28px 48px; }
 }
 .panel { margin-top: 16px; padding: 20px; }
 section.panel:has(> #chart) { padding-bottom: 12px; }
+.adtention-earnings { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.adtention-earnings span { display: grid; gap: 3px; }
+.adtention-earnings b { color: var(--ink); font-size: 12px; }
+.adtention-earnings small { color: var(--ink-muted); font-size: 11px; }
+.adtention-earnings strong { color: var(--accent); font-size: 18px; font-variant-numeric: tabular-nums; }
 
 header button, button[type="submit"] {
   min-height: 36px;
