@@ -320,12 +320,31 @@ function render(data) {
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
   renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAdtention(data.adtention); renderSessions(data.sessions); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
+let loadVersion = 0;
+let refreshPromise = null;
 async function load(refresh = false) {
-  if (refresh) await fetch('/api/refresh', { method: 'POST' });
-  const [dataResponse, adtentionResponse] = await Promise.all([fetch(`/api/data?${filterQuery()}`), fetch('/api/adtention/balance')]);
-  const data = await dataResponse.json(); data.adtention = await adtentionResponse.json();
-  makeColors(data);
-  render(data); $('#status').textContent = `${number.format(data.summary.sessions)} sessions · actualisé ${new Date().toLocaleTimeString('fr-FR')}`;
+  const version = ++loadVersion;
+  try {
+    if (refresh) {
+      refreshPromise ||= fetch('/api/refresh', { method: 'POST' });
+      const response = await refreshPromise;
+      refreshPromise = null;
+      if (!response.ok) throw new Error('Refresh impossible');
+    }
+    const dataResponse = await fetch(`/api/data?${filterQuery()}`);
+    if (!dataResponse.ok) throw new Error('Données indisponibles');
+    const data = await dataResponse.json();
+    if (version !== loadVersion) return;
+    makeColors(data);
+    render(data); $('#status').textContent = `${number.format(data.summary.sessions)} sessions · actualisé ${new Date().toLocaleTimeString('fr-FR')}`;
+    fetch('/api/adtention/balance')
+      .then((response) => response.ok ? response.json() : null)
+      .then((balance) => { if (version === loadVersion) renderAdtention(balance); })
+      .catch(() => { if (version === loadVersion) renderAdtention(null); });
+  } catch {
+    refreshPromise = null;
+    if (version === loadVersion) $('#status').textContent = 'Connexion impossible · nouvelle tentative automatique';
+  }
 }
 $('#refresh').onclick = () => { load(true); loadLimits(true); };
 document.addEventListener('visibilitychange', () => { if (!document.hidden) loadLimits(); });
@@ -372,4 +391,4 @@ $('#update').onclick = async () => {
     location.reload();
   } catch (error) { alert(error.message); button.disabled = false; button.textContent = '↓ Nouvelle version'; }
 };
-setPeriod(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
+setPeriod(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(); loadLimits(); checkVersion(); }, 15000);

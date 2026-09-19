@@ -123,7 +123,6 @@ function sendJson(res, payload, status = 200) { res.writeHead(status, { 'Content
 function sendFile(res, file) { if (!fs.existsSync(file)) { res.writeHead(404); res.end('Not found'); return; } const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html'; res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store' }); fs.createReadStream(file).pipe(res); }
 function readBody(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', (chunk) => raw += chunk); req.on('end', () => { try { resolve(JSON.parse(raw || '{}')); } catch { reject(new Error('JSON invalide')); } }); req.on('error', reject); }); }
 
-refresh();
 const desiredPort = process.env.PORT ? Number(process.env.PORT) : 0;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
@@ -150,6 +149,9 @@ server.listen(desiredPort, '127.0.0.1', async () => {
   const { port } = server.address();
   const url = `http://127.0.0.1:${port}`;
   console.log(`AI Usage Monitor: ${url}`);
+  setTimeout(() => {
+    try { refresh(); } catch (error) { console.error(`Initial refresh failed: ${error.message}`); }
+  }, 1000);
   if (process.argv.includes('--open')) {
     try {
       const { exec } = await import('node:child_process');
