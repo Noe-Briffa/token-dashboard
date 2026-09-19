@@ -201,11 +201,7 @@ const saveHistoryPref = (shown) => { try { localStorage.setItem('usage-monitor-h
 let limitsHistory = null, lastLimits = null;
 function historyScale(points) {
   const values = points.flatMap((point) => [point.p, point.s]).filter(Number.isFinite);
-  if (!values.length) return null;
-  let lo = Math.min(...values), hi = Math.max(...values);
-  if (hi - lo < 10) { const mid = (hi + lo) / 2; lo = mid - 5; hi = mid + 5; }
-  const pad = (hi - lo) * 0.15;
-  return { lo: Math.max(0, lo - pad), hi: Math.min(100, hi + pad) };
+  return values.length ? { lo: 0, hi: 100 } : null;
 }
 function paintHistory() {
   if (!readHistoryPref()) return;
@@ -225,21 +221,23 @@ function paintHistory() {
     return usable.map((point) => `${point === usable[0] ? 'M' : 'L'}${x(point.i)},${y(point.v)}`).join('');
   };
   const series = (key) => points.map((point, i) => ({ i, v: point[key] })).filter((point) => Number.isFinite(point.v));
-  const primary = series('p'), lastPoint = primary[primary.length - 1];
-  const d = path('p'), area = d ? `${d}L${x(points.length - 1)},${H}L0,${H}Z` : '';
-  const marker = lastPoint ? `<i class="spark-marker" data-tip="Actuel : ${Math.round(lastPoint.v)} % restants" style="left:${(lastPoint.i / Math.max(points.length - 1, 1) * 100).toFixed(2)}%;top:${y(lastPoint.v)}px"></i>` : '';
+  const primary = series('p'), secondary = series('s'), lastPoint = primary[primary.length - 1], lastSecondary = secondary[secondary.length - 1];
+  const currentValue = (items) => items.length ? `${Math.round(items[items.length - 1].v)} %` : '—';
+  const d = path('p'), area = d ? `${d}L${x(points.length - 1)},${y(0)}L0,${y(0)}Z` : '';
+  const marker = lastPoint ? `<i class="spark-marker" data-tip="5 heures : ${Math.round(lastPoint.v)} % restants" style="left:${(lastPoint.i / Math.max(points.length - 1, 1) * 100).toFixed(2)}%;top:${y(lastPoint.v)}px"></i>` : '';
+  const secondaryMarker = lastSecondary ? `<i class="spark-marker secondary" data-tip="Hebdo : ${Math.round(lastSecondary.v)} % restants" style="left:${(lastSecondary.i / Math.max(points.length - 1, 1) * 100).toFixed(2)}%;top:${y(lastSecondary.v)}px"></i>` : '';
   const spanMs = Date.parse(points[points.length - 1].t) - Date.parse(points[0].t);
   const byHour = spanMs < 24 * 3600000;
   const fmtX = (t) => byHour ? new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }).replace(':', 'h') : new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
   const caption = byHour ? `dernières ${Math.max(1, Math.round(spanMs / 3600000))} h` : '7 derniers jours';
   const inAlert = LIMIT_ALERT >= scale.lo && LIMIT_ALERT <= scale.hi;
-  const alertLine = inAlert ? `<line x1="0" y1="${y(LIMIT_ALERT)}" x2="${W}" y2="${y(LIMIT_ALERT)}" class="limit-threshold"/>` : '';
   const alertChip = inAlert ? `<span class="spark-threshold-chip" style="top:${y(LIMIT_ALERT)}px">${LIMIT_ALERT} %</span>` : '';
-  el.innerHTML = `<div class="spark-head"><div class="spark-legend"><span class="spark-key solid">5 heures</span><span class="spark-key dashed">Hebdo</span></div><span class="muted">${escape(caption)} · % restants</span></div>`
-    + `<div class="spark-wrap"><span class="spark-y spark-y-hi">${Math.round(scale.hi)} %</span><span class="spark-y spark-y-lo">${Math.round(scale.lo)} %</span>`
-    + `<div class="spark-plot"><i class="spark-grid" style="top:${T}px"></i><i class="spark-grid" style="bottom:${H - T - plotH}px"></i>`
-    + `<svg class="limit-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0"/><stop offset="1"/></linearGradient></defs>${area ? `<path d="${area}" class="spark-area"/>` : ''}<path d="${path('s')}" class="spark-secondary"/><path d="${d}" class="spark-primary"/>${alertLine}</svg>`
-    + marker + alertChip + `</div></div>`
+  const axis = [100, 50, 0].map((value) => `<span class="spark-y" style="top:${y(value)}px">${value} %</span>`).join('');
+  const grid = [100, 50, 20, 0].map((value) => `<i class="spark-grid${value === LIMIT_ALERT ? ' threshold' : ''}" style="top:${y(value)}px"></i>`).join('');
+  el.innerHTML = `<div class="spark-head"><div class="spark-legend"><span class="spark-key solid"><span>5 heures</span><b>${currentValue(primary)}</b></span><span class="spark-key dashed"><span>Hebdo</span><b>${currentValue(secondary)}</b></span></div><span class="muted">${escape(caption)} · % restants</span></div>`
+    + `<div class="spark-wrap">${axis}<div class="spark-plot">${grid}`
+    + `<svg class="limit-spark" role="img" aria-label="Historique des limites Codex, 5 heures et hebdomadaire" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${area ? `<path d="${area}" class="spark-area"/>` : ''}<path d="${path('s')}" class="spark-secondary"/><path d="${d}" class="spark-primary"/></svg>`
+    + secondaryMarker + marker + alertChip + `</div></div>`
     + `<div class="spark-x"><span>${escape(fmtX(points[0].t))}</span><span>${escape(fmtX(points[points.length - 1].t))}</span></div>`;
 }
 let historyAt = 0;
@@ -346,7 +344,19 @@ async function load(refresh = false) {
     if (version === loadVersion) $('#status').textContent = 'Connexion impossible · nouvelle tentative automatique';
   }
 }
-$('#refresh').onclick = () => { load(true); loadLimits(true); };
+$('#refresh').onclick = async () => {
+  const button = $('#refresh'), feedback = $('#refresh-feedback');
+  button.disabled = true; button.textContent = 'Actualisation…'; button.classList.add('is-refreshing');
+  feedback.textContent = 'Mise à jour en cours'; feedback.classList.add('visible');
+  try {
+    await Promise.all([load(true), loadLimits(true)]);
+    button.textContent = 'Actualisé ✓'; feedback.textContent = 'Données à jour';
+  } catch {
+    button.textContent = 'Réessayer'; feedback.textContent = 'Actualisation impossible';
+  } finally {
+    setTimeout(() => { button.disabled = false; button.textContent = 'Actualiser'; button.classList.remove('is-refreshing'); feedback.classList.remove('visible'); }, 1800);
+  }
+};
 document.addEventListener('visibilitychange', () => { if (!document.hidden) loadLimits(); });
 window.addEventListener('focus', () => loadLimits());
 applyTheme(themePreference);
