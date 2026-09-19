@@ -54,19 +54,44 @@ const modeLabel = () => $('#cost-mode').value === 'api_cost' ? 'Estimation API' 
 const value = (row) => Number(row[$('#metric').value === 'cost' ? $('#cost-mode').value : 'total'] ?? 0);
 const formatted = (amount) => $('#metric').value === 'cost' ? money.format(amount) : compact.format(amount);
 
+const modelPalette = [18, 48, 78, 108, 138, 168, 198, 228, 258, 288, 318, 348].map((hue) => `hsl(${hue} 68% 62%)`);
+const canonicalModel = (model) => String(model || 'Modèle inconnu').trim().toLowerCase().replace(/\s+/g, ' ');
+const knownModelColors = new Map([
+  ['codex-auto-review', modelPalette[0]],
+  ['gpt-5.3-codex', modelPalette[1]],
+  ['gpt-5.4', modelPalette[2]],
+  ['gpt-5.4-mini', modelPalette[3]],
+  ['gpt-5.5', modelPalette[4]],
+  ['gpt-5.6-luna', modelPalette[5]],
+  ['gpt-5.6-sol', modelPalette[6]],
+  ['gpt-5.6-terra', modelPalette[7]],
+  ['mimo-v2.5-free', modelPalette[8]],
+  ['muse-spark-1.2-contributor-free', modelPalette[9]],
+  ['muse-spark-1.3-contributor-free', modelPalette[10]],
+  ['nemotron-3-ultra-free', modelPalette[11]],
+]);
+function stableColorIndex(value, size) {
+  let hash = 2166136261;
+  for (const character of canonicalModel(value)) { hash ^= character.charCodeAt(0); hash = Math.imul(hash, 16777619); }
+  return (hash >>> 0) % size;
+}
+function modelColor(model) {
+  const key = canonicalModel(model);
+  return knownModelColors.get(key) || modelPalette[stableColorIndex(key, modelPalette.length)];
+}
 function hue(index, count, offset) { return `hsl(${Math.round((offset + index * 360 / Math.max(count, 1)) % 360)} 68% 62%)`; }
 function makeColors(data) {
   const models = [...new Set(data.options.filter((row) => row.model).map((row) => row.model))].sort();
   const platforms = [...new Set(data.options.map((row) => row.platform))].filter(Boolean).sort();
   const projects = [...new Set(data.projects.map((row) => shortProject(row.label)))].sort();
-  modelColors = new Map(models.map((key, index) => [key, hue(index, models.length, 18)]));
+  modelColors = new Map(models.map((key) => [canonicalModel(key), modelColor(key)]));
   platformColors = new Map(platforms.map((key, index) => [key, hue(index, platforms.length, 210)]));
   projectColors = new Map(projects.map((key, index) => [key, hue(index, projects.length, 280)]));
 }
 function colorFor(row, kind = 'model') {
   if (kind === 'platform') return platformColors.get(row.label || row.platform) || '#70e1c8';
   if (kind === 'project') return projectColors.get(row.label) || '#70e1c8';
-  return modelColors.get(row.model || row.label) || '#70e1c8';
+  return modelColors.get(canonicalModel(row.model || row.label)) || '#70e1c8';
 }
 function mergeByModel(rows) {
   const merged = new Map();
