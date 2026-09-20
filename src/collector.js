@@ -347,9 +347,12 @@ export function normalizeLimits(payload) {
 let limitsCache = null; // ponytail: mémoire seule, un fetch / 5 min max, pas de table
 let lastGoodLimits = null; // dernier succès, réaffiché en grisé en cas d'échec
 export async function collectCodexLimits({ authFile = defaultCodexAuth(), cacheMs = 300000, fetchImpl = fetch, now = Date.now() } = {}) {
-  if (limitsCache && now - limitsCache.at < cacheMs) return limitsCache.data;
-  const fail = (status) => {
-    const data = { status, plan: lastGoodLimits?.plan || null, primary: lastGoodLimits?.primary || null, secondary: lastGoodLimits?.secondary || null, fetchedAt: lastGoodLimits?.fetchedAt || null };
+  if (limitsCache) {
+    const failureTtl = limitsCache.data.status === 'connected' ? cacheMs : Math.min(cacheMs, 30000);
+    if (now - limitsCache.at < failureTtl) return limitsCache.data;
+  }
+  const fail = (status, reason = null) => {
+    const data = { status, reason, plan: lastGoodLimits?.plan || null, primary: lastGoodLimits?.primary || null, secondary: lastGoodLimits?.secondary || null, fetchedAt: lastGoodLimits?.fetchedAt || null };
     limitsCache = { at: now, data };
     return data;
   };
@@ -371,7 +374,15 @@ export async function collectCodexLimits({ authFile = defaultCodexAuth(), cacheM
     limitsCache = { at: now, data };
     if (data.status === 'connected') lastGoodLimits = data;
     return data;
-  } catch { return fail('network'); }
+  } catch (error) {
+    const cause = error?.cause || error;
+    const code = cause?.code || error?.code;
+    const reason = error?.name === 'TimeoutError' || code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT' ? 'timeout'
+      : code === 'ENOTFOUND' || code === 'EAI_AGAIN' ? 'dns'
+        : code === 'CERT_HAS_EXPIRED' || code === 'ERR_TLS_CERT_ALTNAME_INVALID' ? 'tls'
+          : code === 'ECONNRESET' || code === 'ECONNREFUSED' ? 'connection' : 'unknown';
+    return fail('network', reason);
+  }
 }
 
 export function recordLimitsHistory(db, limits, now = Date.now()) {

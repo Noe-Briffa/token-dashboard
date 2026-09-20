@@ -327,7 +327,8 @@ function renderLimits(limits) {
   const bar = (label, window, stale = false) => window
     ? `<div class="limit${stale ? ' stale' : ''}${low(window) ? ' low' : ''}"><div class="limit-head"><b>${label}</b><span>${Math.round(window.remaining)}% restants · ${resetLabel(window.resetsAt)}</span></div><div class="limit-track"><i style="width:${Math.min(100, Math.max(0, window.remaining))}%"></i></div></div>`
     : `<div class="limit"><div class="limit-head"><b>${label}</b><span class="muted">indisponible</span></div></div>`;
-  const note = { auth_expired: 'session Codex expirée, relance Codex', not_connected: 'Codex non connecté', not_applicable: 'sans objet (clé API)', network: 'réseau injoignable (chatgpt.com)', rate_limited: 'OpenAI limite les appels, réessaie plus tard', service: 'service OpenAI en erreur', empty: 'réponse OpenAI sans fenêtres de quota' }[limits.status] || 'limites indisponibles pour le moment';
+  const networkNote = { timeout: 'délai dépassé vers chatgpt.com', dns: 'DNS ne résout pas chatgpt.com', tls: 'connexion TLS refusée par chatgpt.com', connection: 'connexion interrompue vers chatgpt.com', unknown: 'erreur réseau vers chatgpt.com' }[limits.reason];
+  const note = { auth_expired: 'session Codex expirée, relance Codex', not_connected: 'Codex non connecté', not_applicable: 'sans objet (clé API)', network: networkNote || 'réseau injoignable (chatgpt.com)', rate_limited: 'OpenAI limite les appels, réessaie plus tard', service: 'service OpenAI en erreur', empty: 'réponse OpenAI sans fenêtres de quota' }[limits.status] || 'limites indisponibles pour le moment';
   const title = `Limites Codex${limits.plan ? ` · ${escape(limits.plan)}` : ''}`;
   const alert = [['5 heures', limits.primary], ['Hebdo', limits.secondary]].filter(([, window]) => low(window)).map(([label]) => label).join(' et ');
   const badge = alert ? `<b class="limit-alert">⚠ ${escape(alert)} sous les ${LIMIT_ALERT} %</b>` : '';
@@ -344,14 +345,21 @@ function renderLimits(limits) {
 }
 let limitsAt = 0;
 async function loadLimits(force = false) {
-  if (!force && Date.now() - limitsAt < 60000) return;
+  if (!force && Date.now() - limitsAt < 60000) return { ok: true, cached: true };
   const historyPromise = loadHistory(force);
   try {
-    renderLimits(await (await fetch('/api/limits')).json());
+    const response = await fetch(`/api/limits${force ? '?force=1' : ''}`);
+    const limits = await response.json();
+    if (!response.ok) throw new Error(limits.error || 'Limites indisponibles');
+    renderLimits(limits);
     limitsAt = Date.now();
     await historyPromise;
     paintHistory();
-  } catch { /* bandeau garde son état */ }
+    return { ok: true, limits };
+  } catch (error) {
+    await historyPromise;
+    return { ok: false, error };
+  }
 }
 function renderSplit(s) {
   const mode = $('#cost-mode').value === 'api_cost' ? 'api' : 'paid';
@@ -392,11 +400,30 @@ function render(data) {
 }
 let loadVersion = 0;
 let refreshPromise = null;
+let manualRefreshPromise = null;
 let scrolling = false;
 let pendingData = null;
 let refreshQueued = false;
 let scrollTimer = 0;
 let visibilityTimer = 0;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function startRefresh() {
+  const response = await fetch('/api/refresh', { method: 'POST' });
+  const started = await response.json();
+  if (!response.ok) throw new Error(started.error || 'Refresh impossible');
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    const statusResponse = await fetch('/api/refresh/status');
+    const status = await statusResponse.json();
+    if (!statusResponse.ok) throw new Error(status.error || 'Statut du refresh indisponible');
+    if (!status.running) {
+      if (status.error) throw new Error(status.error);
+      return status.result;
+    }
+    await sleep(250);
+  }
+  throw new Error('Refresh trop long');
+}
 function paint(data, version) {
   if (version !== loadVersion) return;
   makeColors(data);
@@ -419,12 +446,11 @@ function requestRefresh() {
 }
 async function load(refresh = false) {
   const version = ++loadVersion;
+  let refreshResult = null;
   try {
     if (refresh) {
-      refreshPromise ||= fetch('/api/refresh', { method: 'POST' });
-      const response = await refreshPromise;
-      refreshPromise = null;
-      if (!response.ok) throw new Error('Refresh impossible');
+      refreshPromise ||= startRefresh().finally(() => { refreshPromise = null; });
+      refreshResult = await refreshPromise;
     }
     const dataResponse = await fetch(`/api/data?${filterQuery()}`);
     if (!dataResponse.ok) throw new Error('Données indisponibles');
@@ -432,23 +458,32 @@ async function load(refresh = false) {
     if (version !== loadVersion) return;
     if (scrolling) pendingData = { data, version };
     else paint(data, version);
-  } catch {
+    return { ok: true, refresh: refreshResult };
+  } catch (error) {
     refreshPromise = null;
     if (version === loadVersion) $('#status').textContent = 'Connexion impossible · nouvelle tentative automatique';
+    return { ok: false, error };
   }
 }
-$('#refresh').onclick = async () => {
+$('#refresh').onclick = () => {
+  if (manualRefreshPromise) return;
   const button = $('#refresh'), feedback = $('#refresh-feedback');
   button.disabled = true; button.textContent = 'Actualisation…'; button.classList.add('is-refreshing');
   feedback.textContent = 'Mise à jour en cours'; feedback.classList.add('visible');
-  try {
-    await Promise.all([load(true), loadLimits(true)]);
-    button.textContent = 'Actualisé ✓'; feedback.textContent = 'Données à jour';
-  } catch {
-    button.textContent = 'Réessayer'; feedback.textContent = 'Actualisation impossible';
-  } finally {
+  manualRefreshPromise = Promise.all([load(true), loadLimits(true)]).then(([dataResult, limitsResult]) => {
+    if (!dataResult.ok) throw dataResult.error;
+    const codex = dataResult.refresh?.codex;
+    if (codex?.error || codex?.status === 'not_connected') throw new Error(codex.error || 'Collecte Codex indisponible');
+    const imported = Number(codex?.imported) || 0;
+    button.textContent = 'Actualisé ✓';
+    feedback.textContent = !limitsResult.ok ? `Données à jour (${imported} session${imported > 1 ? 's' : ''}) · quotas indisponibles` : imported ? `${imported} session${imported > 1 ? 's' : ''} importée${imported > 1 ? 's' : ''}` : codex?.skipped ? 'Aucune nouvelle session' : 'Données à jour';
+  }).catch((error) => {
+    button.textContent = 'Réessayer'; feedback.textContent = error?.message || 'Actualisation impossible';
+    if (error?.message) $('#status').textContent = error.message;
+  }).finally(() => {
+    manualRefreshPromise = null;
     setTimeout(() => { button.disabled = false; button.textContent = 'Actualiser'; button.classList.remove('is-refreshing'); feedback.classList.remove('visible'); }, 1800);
-  }
+  });
 };
 window.addEventListener('scroll', () => {
   scrolling = true;

@@ -145,6 +145,13 @@ test('normalizes Codex rate limits to remaining percent with reset time', async 
   assert.equal((await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl: async () => ({ status: 200, ok: true, json: async () => ({}) }) })).status, 'empty');
   const missing = await collectCodexLimits({ authFile: path.join(directory, 'nope.json'), cacheMs: 0, fetchImpl });
   assert.equal(missing.status, 'not_connected');
+  const timeout = new Error('slow'); timeout.name = 'TimeoutError';
+  assert.equal((await collectCodexLimits({ authFile: auth, cacheMs: 0, fetchImpl: async () => { throw timeout; } })).reason, 'timeout');
+  const failureAt = Date.now() + 1000;
+  let attempts = 0;
+  await collectCodexLimits({ authFile: auth, cacheMs: 0, now: failureAt, fetchImpl: async () => { attempts++; throw new Error('down'); } });
+  const recovered = await collectCodexLimits({ authFile: auth, cacheMs: 300000, now: failureAt + 30001, fetchImpl: async () => { attempts++; return { status: 200, ok: true, json: async () => payload }; } });
+  assert.equal(recovered.status, 'connected'); assert.equal(attempts, 2);
   fs.rmSync(directory, { recursive: true, force: true });
 });
 

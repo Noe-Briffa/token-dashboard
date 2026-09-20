@@ -20,10 +20,12 @@ let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not
 let adtentionCache = { at: 0, value: null };
 let initialRefreshTimer = null;
 let refreshPromise = null;
+let refreshState = { running: false, result: null, error: null, startedAt: null, finishedAt: null };
 const adtentionApi = (process.env.ADTENTION_API || 'https://api.adtention.ai').replace(/\/+$/, '');
 
 function refresh() {
   if (refreshPromise) return refreshPromise;
+  refreshState = { running: true, result: null, error: null, startedAt: new Date().toISOString(), finishedAt: null };
   refreshPromise = (async () => {
     const codex = await collectCodexAsync(db);
     const opencode = await collectOpenCodeAsync(db);
@@ -31,7 +33,13 @@ function refresh() {
     sourceState = result;
     if (typeof global.gc === 'function') global.gc();
     return result;
-  })().finally(() => { refreshPromise = null; });
+  })().then((result) => {
+    refreshState = { ...refreshState, running: false, result, finishedAt: new Date().toISOString() };
+    return result;
+  }).catch((error) => {
+    refreshState = { ...refreshState, running: false, error: error.message, finishedAt: new Date().toISOString() };
+    throw error;
+  }).finally(() => { refreshPromise = null; });
   return refreshPromise;
 }
 async function adtentionBalance() {
@@ -164,11 +172,19 @@ function readBody(req) { return new Promise((resolve, reject) => { let raw = '';
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   try {
-    if (req.method === 'POST' && url.pathname === '/api/refresh') return sendJson(res, await refresh());
+    if (req.method === 'POST' && url.pathname === '/api/refresh') {
+      refresh().catch(() => {});
+      return sendJson(res, { started: true, running: true }, 202);
+    }
+    if (url.pathname === '/api/refresh/status') return sendJson(res, refreshState);
     if (url.pathname === '/api/adtention/balance') return sendJson(res, await adtentionBalance());
     if (req.method === 'POST' && url.pathname === '/api/pricing') return sendJson(res, savePricing(await readBody(req)));
     if (url.pathname === '/api/data') return sendJson(res, data(url.searchParams));
-    if (url.pathname === '/api/limits') { const limits = await collectCodexLimits(); recordLimitsHistory(db, limits); return sendJson(res, limits); }
+    if (url.pathname === '/api/limits') {
+      const limits = await collectCodexLimits(url.searchParams.get('force') === '1' ? { cacheMs: 0 } : {});
+      recordLimitsHistory(db, limits);
+      return sendJson(res, limits);
+    }
     if (url.pathname === '/api/limits/history') {
       const days = Math.min(30, Math.max(1, Number(url.searchParams.get('days')) || 7));
       const points = db.prepare("SELECT taken_at t, primary_remaining p, secondary_remaining s FROM limits_history WHERE taken_at >= datetime('now', ?) ORDER BY taken_at").all(`-${days} days`);

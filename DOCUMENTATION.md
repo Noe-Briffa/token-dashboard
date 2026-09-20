@@ -662,7 +662,7 @@ Il relit la base locale avec les filtres actifs, mais ne relance pas les collect
 
 ### Actualisation complète
 
-Une actualisation complète appelle d'abord :
+Une actualisation complète démarre en arrière-plan avec :
 
 ```text
 POST /api/refresh
@@ -673,11 +673,13 @@ Puis elle recharge `/api/data`.
 `/api/refresh` exécute :
 
 ```text
-collectCodex(db, { isolated: true })
-collectOpenCode(db, { isolated: true })
+collectCodexAsync(db)
+collectOpenCodeAsync(db)
 ```
 
-Les collecteurs isolés renvoient leurs lignes normalisées au serveur principal. Le worker Electron utilise aussi un garbage collector explicite et un plafond de heap V8 de `256 MB`.
+Les collecteurs isolés renvoient leurs lignes normalisées au serveur principal. Le worker utilise aussi un garbage collector explicite quand il est disponible.
+
+La route `GET /api/refresh/status` permet de suivre la collecte jusqu'à sa fin. Le dashboard recharge alors les données locales et affiche le nombre de sessions importées ou l'erreur rencontrée.
 
 ### Actualisation automatique actuelle
 
@@ -697,7 +699,7 @@ Une promesse partagée évite de lancer plusieurs collectes simultanées lorsque
 
 ### Limites Codex et cache réseau
 
-Les quotas Codex disposent d'un cache côté collecteur de cinq minutes pour éviter de contacter trop souvent l'API OpenAI.
+Les quotas Codex disposent d'un cache côté collecteur de cinq minutes après une réussite. Un échec réseau est conservé au maximum trente secondes, et une requête forcée peut ignorer le cache.
 
 Le frontend ne demande réellement de nouvelles limites qu'au maximum toutes les soixante secondes, sauf lors d'une demande forcée.
 
@@ -709,24 +711,32 @@ Toutes les routes sont locales et renvoient du JSON pour les endpoints API.
 
 ### `POST /api/refresh`
 
-Relance les collecteurs Codex et OpenCode.
+Lance les collecteurs Codex et OpenCode en arrière-plan. La route répond immédiatement avec un statut `202`.
+
+### `GET /api/refresh/status`
+
+Retourne l'état de la collecte en cours et son dernier résultat.
 
 Réponse indicative :
 
 ```json
 {
-  "codex": {
-    "platform": "codex",
-    "imported": 12,
-    "sourceSessions": 8,
-    "source": ".../.codex/sessions"
-  },
-  "opencode": {
-    "platform": "opencode",
-    "status": "connected",
-    "imported": 4,
-    "sourceSessions": 3,
-    "source": ".../opencode.db"
+  "running": false,
+  "error": null,
+  "result": {
+    "codex": {
+      "platform": "codex",
+      "imported": 12,
+      "sourceSessions": 8,
+      "source": ".../.codex/sessions"
+    },
+    "opencode": {
+      "platform": "opencode",
+      "status": "connected",
+      "imported": 4,
+      "sourceSessions": 3,
+      "source": ".../opencode.db"
+    }
   }
 }
 ```
