@@ -29,8 +29,8 @@ function iconFile(images) {
 }
 
 app.whenReady().then(() => {
-  const window = new BrowserWindow({ show: false, width: 256, height: 256, webPreferences: { offscreen: true } });
-  return window.loadFile(path.join(assets, 'logo.svg')).then(() => window.webContents.capturePage({ x: 0, y: 0, width: 256, height: 256 })).then((source) => {
+  const window = new BrowserWindow({ show: false, width: 256, height: 256, transparent: true, backgroundColor: '#00000000', webPreferences: { offscreen: true } });
+  return window.loadFile(path.join(assets, 'logo.svg')).then(() => window.webContents.insertCSS('html, body { background: transparent !important; }')).then(() => window.webContents.capturePage({ x: 0, y: 0, width: 256, height: 256 })).then((source) => {
     window.destroy();
     if (source.isEmpty()) throw new Error('Logo SVG could not be rasterized');
     const images = [16, 32, 48, 256].map((size) => ({ size, data: source.resize({ width: size, height: size }).toPNG() }));
