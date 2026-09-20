@@ -281,6 +281,7 @@ button.head-toggle:hover { color: var(--ink); background: none; border: none; te
 .heat-level-5 { background: oklch(52% 0.18 28); border-color: oklch(45% 0.18 28); }
 .activity-legend { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 6px; margin-top: 10px; color: var(--ink-muted); font-size: 10px; }
 .activity-legend strong { margin-right: 4px; color: var(--ink); font-size: 10px; }
+.activity-legend-section { margin-left: 12px; }
 .activity-total-note { margin-left: 8px; color: var(--ink-muted); font-style: italic; }
 .activity-legend i { width: 14px; height: 14px; border: 1px solid var(--line); border-radius: 4px; }
 .activity-legend i.heat-empty { background: var(--surface-muted); }
