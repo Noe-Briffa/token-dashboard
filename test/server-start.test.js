@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,5 +34,19 @@ test('serves the dashboard before the initial collection finishes', async () => 
     assert.equal(data.activity.every((cell) => Number.isInteger(cell.dayIndex) && cell.dayIndex >= 0 && cell.dayIndex < 7 && cell.hour >= 0 && cell.hour < 24), true);
   } finally {
     child.kill();
+  }
+});
+
+test('starts and stops as an embeddable server', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-usage-monitor-'));
+  process.env.AI_USAGE_DATA_DIR = dataDir;
+  const { startServer, stopServer } = await import(`../src/server.js?test=${Date.now()}`);
+  try {
+    const { url } = await startServer({ port: 0 });
+    assert.equal((await fetch(url, { signal: AbortSignal.timeout(1000) })).status, 200);
+  } finally {
+    await stopServer();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    delete process.env.AI_USAGE_DATA_DIR;
   }
 });

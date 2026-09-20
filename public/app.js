@@ -119,10 +119,11 @@ function filterQuery() {
 }
 function renderDonut(id, totalId, rows, target) {
   const minimum = tokenThreshold();
+  const overallTotal = rows.reduce((sum, row) => sum + value(row), 0);
   const usable = rows.filter((row) => (Number(row.total) || 0) >= minimum && value(row) > 0).sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0)); // ordre tokens stable : couleurs et positions fixes entre Tokens et Coût
   const total = usable.reduce((sum, row) => sum + value(row), 0);
   const totalEl = $(`#${totalId}`);
-  if (totalEl) totalEl.textContent = formatted(total);
+  if (totalEl) totalEl.textContent = formatted(overallTotal);
   if (!total) { $(`#${id}`).innerHTML = '<span class="muted">Aucune donnée chiffrable.</span>'; return; }
   let offset = 0;
   const arcs = usable.map((row) => {
@@ -137,7 +138,7 @@ function renderDonut(id, totalId, rows, target) {
       return `<button data-filter="${target}" data-value="${escape(row.label)}" class="${active ? 'active' : ''}" data-tip="${escape(title)}"><i class="dot" style="background:${colorFor(row, target)}"></i><label>${escape(row.label)}</label><small>${formatted(value(row))}</small></button>`;
   }).join('');
   const clearHint = current && usable.length === 1 && usable[0].label === current ? `<button class="legend-clear" data-clear="${target}" data-tip="Revenir à tous les ${target === 'model' ? 'modèles' : target === 'project' ? 'projets' : 'plateformes'}">↺ Tous</button>` : '';
-  $(`#${id}`).innerHTML = `<svg class="donut" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="none" stroke="var(--line)" stroke-width="14"/>${arcs}<text x="50" y="48">${$('#metric').value === 'cost' ? 'COÛT' : 'TOKENS'}</text><text x="50" y="60">${escape(formatted(total))}</text></svg><div class="legend">${legend}${clearHint}</div>`;
+  $(`#${id}`).innerHTML = `<svg class="donut" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="none" stroke="var(--line)" stroke-width="14"/>${arcs}<text x="50" y="48">${$('#metric').value === 'cost' ? 'COÛT' : 'TOKENS'}</text><text x="50" y="60">${escape(formatted(overallTotal))}</text></svg><div class="legend">${legend}${clearHint}</div>`;
   $(`#${id}`).querySelectorAll('button[data-filter]').forEach((button) => button.onclick = () => {
     const isActive = button.classList.contains('active');
     $(`#${button.dataset.filter}`).value = isActive ? '' : button.dataset.value;
@@ -386,6 +387,31 @@ function render(data) {
 }
 let loadVersion = 0;
 let refreshPromise = null;
+let scrolling = false;
+let pendingData = null;
+let refreshQueued = false;
+let scrollTimer = 0;
+let visibilityTimer = 0;
+function paint(data, version) {
+  if (version !== loadVersion) return;
+  makeColors(data);
+  render(data); $('#status').textContent = `${number.format(data.summary.sessions)} sessions · actualisé ${new Date().toLocaleTimeString('fr-FR')}`;
+  fetch('/api/adtention/balance')
+    .then((response) => response.ok ? response.json() : null)
+    .then((balance) => { if (version === loadVersion) renderAdtention(balance); })
+    .catch(() => { if (version === loadVersion) renderAdtention(null); });
+}
+function flushPendingData() {
+  if (scrolling || !pendingData) return;
+  const { data, version } = pendingData;
+  pendingData = null;
+  paint(data, version);
+}
+function requestRefresh() {
+  if (document.hidden || scrolling) { refreshQueued = true; return; }
+  refreshQueued = false;
+  load(true);
+}
 async function load(refresh = false) {
   const version = ++loadVersion;
   try {
@@ -399,12 +425,8 @@ async function load(refresh = false) {
     if (!dataResponse.ok) throw new Error('Données indisponibles');
     const data = await dataResponse.json();
     if (version !== loadVersion) return;
-    makeColors(data);
-    render(data); $('#status').textContent = `${number.format(data.summary.sessions)} sessions · actualisé ${new Date().toLocaleTimeString('fr-FR')}`;
-    fetch('/api/adtention/balance')
-      .then((response) => response.ok ? response.json() : null)
-      .then((balance) => { if (version === loadVersion) renderAdtention(balance); })
-      .catch(() => { if (version === loadVersion) renderAdtention(null); });
+    if (scrolling) pendingData = { data, version };
+    else paint(data, version);
   } catch {
     refreshPromise = null;
     if (version === loadVersion) $('#status').textContent = 'Connexion impossible · nouvelle tentative automatique';
@@ -423,7 +445,21 @@ $('#refresh').onclick = async () => {
     setTimeout(() => { button.disabled = false; button.textContent = 'Actualiser'; button.classList.remove('is-refreshing'); feedback.classList.remove('visible'); }, 1800);
   }
 };
-document.addEventListener('visibilitychange', () => { if (!document.hidden) loadLimits(); });
+window.addEventListener('scroll', () => {
+  scrolling = true;
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => {
+    scrolling = false;
+    flushPendingData();
+    if (refreshQueued && !document.hidden) requestRefresh();
+  }, 180);
+}, { passive: true });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  loadLimits();
+  clearTimeout(visibilityTimer);
+  visibilityTimer = setTimeout(requestRefresh, 300);
+});
 window.addEventListener('focus', () => loadLimits());
 applyTheme(themePreference);
 $('#theme').addEventListener('change', () => {
@@ -483,4 +519,4 @@ $('#update').onclick = async () => {
     location.reload();
   } catch (error) { alert(error.message); button.disabled = false; button.textContent = '↓ Nouvelle version'; }
 };
-setPeriod(); updateTokenThresholdState(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
+setPeriod(); updateTokenThresholdState(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { if (document.hidden || scrolling) { refreshQueued = true; return; } requestRefresh(); loadLimits(); checkVersion(); }, 15000);

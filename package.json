@@ -1,13 +1,37 @@
 {
   "name": "ai-usage-monitor",
   "version": "0.1.0",
+  "description": "Dashboard local de suivi des usages Codex et OpenCode",
+  "author": "Noe Briffa",
   "private": true,
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node src/server.js",
     "start:open": "node src/server.js --open",
+    "desktop": "electron electron/main.js",
+    "icons": "electron scripts/generate-icons.cjs",
+    "build:win": "electron-builder --win nsis",
     "collect": "node src/cli.js",
     "test": "node --test"
   },
-  "engines": { "node": ">=22.5" }
+  "build": {
+    "appId": "com.noebr.aiusagemonitor",
+    "productName": "AI Usage Monitor",
+    "files": [
+      "electron/**/*",
+      "assets/**/*",
+      "public/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": { "output": "release" },
+    "win": { "target": "nsis", "icon": "assets/icon.ico" },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true }
+  },
+  "engines": { "node": ">=22.5" },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  }
 }

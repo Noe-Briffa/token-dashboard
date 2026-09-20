@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { collectCodex, collectCodexLimits, collectOpenCode, openDatabase, recordLimitsHistory } from './collector.js';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const publicDir = path.join(root, 'public'), dataDir = path.join(root, 'data');
+const publicDir = path.join(root, 'public'), dataDir = process.env.AI_USAGE_DATA_DIR || path.join(root, 'data');
 fs.mkdirSync(dataDir, { recursive: true });
 const db = openDatabase(path.join(dataDir, 'usage.sqlite'));
 const estimatedCost = `(s.input_tokens * COALESCE(p.input_usd_per_million,0) + s.cached_input_tokens * COALESCE(p.cached_input_usd_per_million,0) + s.output_tokens * COALESCE(p.output_usd_per_million,0) + s.reasoning_tokens * COALESCE(p.reasoning_usd_per_million,0)) / 1000000.0`;
@@ -141,7 +141,6 @@ function sendJson(res, payload, status = 200) { res.writeHead(status, { 'Content
 function sendFile(res, file) { if (!fs.existsSync(file)) { res.writeHead(404); res.end('Not found'); return; } const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html'; res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store' }); fs.createReadStream(file).pipe(res); }
 function readBody(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', (chunk) => raw += chunk); req.on('end', () => { try { resolve(JSON.parse(raw || '{}')); } catch { reject(new Error('JSON invalide')); } }); req.on('error', reject); }); }
 
-const desiredPort = process.env.PORT ? Number(process.env.PORT) : 0;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   try {
@@ -163,18 +162,40 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404); res.end('Not found');
   } catch (error) { sendJson(res, { error: error.message }, 400); }
 });
-server.listen(desiredPort, '127.0.0.1', async () => {
-  const { port } = server.address();
-  const url = `http://127.0.0.1:${port}`;
-  console.log(`AI Usage Monitor: ${url}`);
-  setTimeout(() => {
-    try { refresh(); } catch (error) { console.error(`Initial refresh failed: ${error.message}`); }
-  }, 1000);
-  if (process.argv.includes('--open')) {
-    try {
-      const { exec } = await import('node:child_process');
-      const command = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
-      exec(command);
-    } catch {}
+export function startServer({ open = false, port = process.env.PORT ? Number(process.env.PORT) : 0 } = {}) {
+  if (server.listening) {
+    const address = server.address();
+    return Promise.resolve({ server, port: address.port, url: `http://127.0.0.1:${address.port}` });
   }
-});
+  return new Promise((resolve, reject) => {
+    const onError = (error) => { server.off('listening', onListening); reject(error); };
+    const onListening = async () => {
+      server.off('error', onError);
+      const address = server.address();
+      const url = `http://127.0.0.1:${address.port}`;
+      console.log(`AI Usage Monitor: ${url}`);
+      setTimeout(() => {
+        try { refresh(); } catch (error) { console.error(`Initial refresh failed: ${error.message}`); }
+      }, 1000);
+      if (open) {
+        try {
+          const { exec } = await import('node:child_process');
+          const command = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+          exec(command);
+        } catch {}
+      }
+      resolve({ server, port: address.port, url });
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+export function stopServer() {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve) => server.close(() => { db.close(); resolve(); }));
+}
+
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (isDirectRun) startServer({ open: process.argv.includes('--open') }).catch((error) => { console.error(error); process.exitCode = 1; });

@@ -25,7 +25,25 @@ npm start
 $env:PORT=4318; npm start
 ```
 
-Pas d'installation de dépendances, le projet utilise seulement le serveur HTTP et le pilote SQLite fournis avec Node.
+## Application Windows
+
+Pour lancer la version desktop avec une fenêtre intégrée et une icône dans la zone de notification :
+
+```powershell
+npm run desktop
+```
+
+La fermeture de la fenêtre masque l'application dans le tray. Le menu clic droit permet de rouvrir le dashboard ou de quitter complètement l'application.
+
+Pour générer l'installateur Windows :
+
+```powershell
+npm run build:win
+```
+
+L'installateur est créé dans `release/`. La base de données de l'application desktop est stockée dans `%APPDATA%\AI Usage Monitor\data\usage.sqlite`.
+
+Le serveur classique utilise seulement le serveur HTTP et le pilote SQLite fournis avec Node. La version desktop utilise Electron et ses dépendances de packaging.
 
 ## Ce que tu y trouves
 

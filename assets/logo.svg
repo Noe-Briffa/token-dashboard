@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">AI Usage Monitor</title>
+  <desc id="desc">A mint usage monitor with three token bars on a graphite background.</desc>
+  <rect width="256" height="256" rx="56" fill="#1f2b2b"/>
+  <path d="M64 72h128a16 16 0 0 1 16 16v80a16 16 0 0 1-16 16H64a16 16 0 0 1-16-16V88a16 16 0 0 1 16-16Z" fill="#f7f6f1"/>
+  <path d="M72 96h112v56H72z" fill="#dff5ed"/>
+  <path d="M88 136v-18h16v18h-16Zm28 0v-30h16v30h-16Zm28 0v-42h16v42h-16Z" fill="#42c9aa"/>
+  <path d="M80 168h96" stroke="#1f2b2b" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="184" cy="72" r="18" fill="#f4a261"/>
+  <path d="m176 72 6 6 11-13" fill="none" stroke="#1f2b2b" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
