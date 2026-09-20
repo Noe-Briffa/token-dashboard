@@ -1,6 +1,6 @@
 [package]
 name = "ai-usage-monitor-tauri"
-version = "0.1.2"
+version = "0.1.3"
 description = "AI Usage Monitor Tauri shell"
 authors = ["Noe Briffa"]
 edition = "2021"

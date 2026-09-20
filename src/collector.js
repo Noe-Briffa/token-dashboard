@@ -429,19 +429,28 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated
       FROM session s LEFT JOIN project p ON p.id=s.project_id
     `).all();
     const hasMessage = source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='message'").get();
-    const messageStatement = hasMessage ? source.prepare(`
-      SELECT json_extract(data, '$.modelID') model_id,
-        json_extract(data, '$.providerID') provider_id,
-        json_extract(data, '$.tokens.input') input_tokens,
-        json_extract(data, '$.tokens.cache.read') cached_tokens,
-        json_extract(data, '$.tokens.output') output_tokens,
-        json_extract(data, '$.tokens.reasoning') reasoning_tokens,
-        json_extract(data, '$.tokens.total') total_tokens,
-        json_extract(data, '$.time.created') created_at,
-        json_extract(data, '$.time.completed') completed_at
-      FROM message
-      WHERE session_id=? AND json_valid(data)
-    `) : null;
+    const messagesBySession = new Map();
+    if (hasMessage) {
+      const messages = source.prepare(`
+        SELECT session_id,
+          json_extract(data, '$.modelID') model_id,
+          json_extract(data, '$.providerID') provider_id,
+          json_extract(data, '$.tokens.input') input_tokens,
+          json_extract(data, '$.tokens.cache.read') cached_tokens,
+          json_extract(data, '$.tokens.output') output_tokens,
+          json_extract(data, '$.tokens.reasoning') reasoning_tokens,
+          json_extract(data, '$.tokens.total') total_tokens,
+          json_extract(data, '$.time.created') created_at,
+          json_extract(data, '$.time.completed') completed_at
+        FROM message
+        WHERE json_valid(data)
+      `);
+      for (const message of messages.iterate()) {
+        const list = messagesBySession.get(message.session_id) || [];
+        list.push(message);
+        messagesBySession.set(message.session_id, list);
+      }
+    }
     const sessions = rows.flatMap((row) => {
       let model = row.model, modelMeta = null;
       try { modelMeta = JSON.parse(row.model); model = modelMeta.id || row.model; } catch { /* OpenCode may store plain model ID. */ }
@@ -457,7 +466,7 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated
         try {
           const perDayModel = new Map();
           let hasMessages = false;
-          for (const message of messageStatement.iterate(row.id)) {
+          for (const message of messagesBySession.get(row.id) || []) {
               hasMessages = true;
               const mid = message.model_id || model;
               const prov = message.provider_id || base.provider;

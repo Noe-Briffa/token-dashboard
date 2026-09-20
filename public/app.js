@@ -440,6 +440,7 @@ function flushPendingData() {
   paint(data, version);
 }
 function requestRefresh() {
+  if (manualRefreshPromise) return;
   if (document.hidden || scrolling) { refreshQueued = true; return; }
   refreshQueued = false;
   load(true);
@@ -455,7 +456,7 @@ async function load(refresh = false) {
     const dataResponse = await fetch(`/api/data?${filterQuery()}`);
     if (!dataResponse.ok) throw new Error('Données indisponibles');
     const data = await dataResponse.json();
-    if (version !== loadVersion) return;
+    if (version !== loadVersion) return { ok: true, superseded: true, refresh: refreshResult };
     if (scrolling) pendingData = { data, version };
     else paint(data, version);
     return { ok: true, refresh: refreshResult };
@@ -473,7 +474,9 @@ $('#refresh').onclick = () => {
   manualRefreshPromise = Promise.all([load(true), loadLimits(true)]).then(([dataResult, limitsResult]) => {
     if (!dataResult.ok) throw dataResult.error;
     const codex = dataResult.refresh?.codex;
-    if (codex?.error || codex?.status === 'not_connected') throw new Error(codex.error || 'Collecte Codex indisponible');
+    const opencode = dataResult.refresh?.opencode;
+    const failedSource = [['Codex', codex], ['OpenCode', opencode]].find(([, source]) => source?.error || source?.status === 'not_connected');
+    if (failedSource) throw new Error(failedSource[1].error || `Collecte ${failedSource[0]} indisponible`);
     const imported = Number(codex?.imported) || 0;
     button.textContent = 'Actualisé ✓';
     feedback.textContent = !limitsResult.ok ? `Données à jour (${imported} session${imported > 1 ? 's' : ''}) · quotas indisponibles` : imported ? `${imported} session${imported > 1 ? 's' : ''} importée${imported > 1 ? 's' : ''}` : codex?.skipped ? 'Aucune nouvelle session' : 'Données à jour';
