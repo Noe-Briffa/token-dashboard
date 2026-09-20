@@ -483,4 +483,4 @@ $('#update').onclick = async () => {
     location.reload();
   } catch (error) { alert(error.message); button.disabled = false; button.textContent = '↓ Nouvelle version'; }
 };
-setPeriod(); updateTokenThresholdState(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(); loadLimits(); checkVersion(); }, 15000);
+setPeriod(); updateTokenThresholdState(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(true); loadLimits(); checkVersion(); }, 15000);
