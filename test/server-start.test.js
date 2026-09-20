@@ -9,9 +9,10 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 test('serves the dashboard before the initial collection finishes', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-usage-server-'));
   const child = spawn(process.execPath, ['src/server.js'], {
     cwd: root,
-    env: { ...process.env, PORT: '0' },
+    env: { ...process.env, PORT: '0', AI_USAGE_DATA_DIR: dataDir },
     stdio: ['ignore', 'pipe', 'ignore'],
   });
   try {
@@ -34,6 +35,8 @@ test('serves the dashboard before the initial collection finishes', async () => 
     assert.equal(data.activity.every((cell) => Number.isInteger(cell.dayIndex) && cell.dayIndex >= 0 && cell.dayIndex < 7 && cell.hour >= 0 && cell.hour < 24), true);
   } finally {
     child.kill();
+    if (child.exitCode === null) await new Promise((resolve) => child.once('exit', resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
 

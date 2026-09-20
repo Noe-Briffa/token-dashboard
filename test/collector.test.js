@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { collectCodex, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase, parseCodexSession, recordLimitsHistory } from '../src/collector.js';
+import { mergeLegacyData } from '../src/storage.js';
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'usage-monitor-'));
 
@@ -16,6 +17,20 @@ test('migrates existing sessions to codex platform without losing data', () => {
   assert.equal(row.id, 'old'); assert.equal(row.platform, 'codex'); assert.equal(row.agent, 'Codex CLI');
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='model_pricing'").get().name, 'model_pricing');
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('merges legacy pricing and limits history without overwriting newer values', () => {
+  const directory = temp(), legacyFile = path.join(directory, 'legacy.sqlite'), targetFile = path.join(directory, 'target.sqlite');
+  const legacy = openDatabase(legacyFile);
+  legacy.prepare("INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, provider, pricing_unit, updated_at) VALUES ('codex', 'legacy-model', 1, 2, 3, 4, 'openai', 'per_1M_tokens', '2026-09-20T12:00:00.000Z')").run();
+  legacy.prepare("INSERT INTO limits_history (taken_at, plan, primary_remaining, secondary_remaining) VALUES ('2026-09-20T12:00:00.000Z', 'plus', 80, 70)").run();
+  legacy.close();
+  const target = openDatabase(targetFile);
+  mergeLegacyData(target, legacyFile);
+  const pricing = target.prepare("SELECT input_usd_per_million, output_usd_per_million FROM model_pricing WHERE platform='codex' AND model='legacy-model'").get();
+  assert.deepEqual({ ...pricing }, { input_usd_per_million: 1, output_usd_per_million: 3 });
+  assert.equal(target.prepare("SELECT COUNT(*) n FROM limits_history WHERE taken_at='2026-09-20T12:00:00.000Z'").get().n, 1);
+  target.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test('imports Codex usage with platform and normalizes future collector contract', () => {

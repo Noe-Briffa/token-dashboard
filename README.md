@@ -41,7 +41,7 @@ Pour générer l'installateur Windows :
 npm run build:win
 ```
 
-L'installateur est créé dans `release/`. La base de données de l'application desktop est stockée dans `%APPDATA%\AI Usage Monitor\data\usage.sqlite`.
+L'installateur est créé dans `release/`. Sous Windows, la version web et la version desktop partagent la base `%APPDATA%\ai-usage-monitor\data\usage.sqlite`, y compris les tarifs et l'historique des limites.
 
 Le serveur classique utilise seulement le serveur HTTP et le pilote SQLite fournis avec Node. La version desktop utilise Electron et ses dépendances de packaging.
 

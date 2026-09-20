@@ -377,7 +377,8 @@ Ce choix évite de conserver des sessions fantômes.
 La base locale est :
 
 ```text
-data/usage.sqlite
+Windows: %APPDATA%/ai-usage-monitor/data/usage.sqlite
+Autres plateformes et environnement de développement: data/usage.sqlite
 ```
 
 Elle utilise le mode WAL (`Write-Ahead Logging`) et est ignorée par Git. Les fichiers temporaires SQLite `-wal` et `-shm` peuvent être présents pendant l'exécution.
