@@ -14,6 +14,9 @@ let tray;
 let window;
 let serverProcess;
 let quitting = false;
+let closingToTray = false;
+let closePromise = null;
+let openPromise = null;
 
 function migrateDatabase(targetDir) {
   const targetDatabase = path.join(targetDir, 'usage.sqlite');
@@ -37,7 +40,7 @@ function trayIcon() {
 }
 
 function showWindow() {
-  if (!window) return;
+  if (!window) return openWindow().catch((error) => console.error(`AI Usage Monitor reopen failed: ${error.message}`));
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
@@ -46,6 +49,12 @@ function showWindow() {
 function toggleWindow() {
   if (window?.isVisible()) window.hide();
   else showWindow();
+}
+
+function handleWindowClose(event) {
+  if (quitting || closingToTray) return;
+  event.preventDefault();
+  closeToTray();
 }
 
 function createWindow(url) {
@@ -60,12 +69,7 @@ function createWindow(url) {
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   window.loadURL(url);
-  window.on('close', (event) => {
-    if (!quitting) {
-      event.preventDefault();
-      window.hide();
-    }
-  });
+  window.on('close', handleWindowClose);
 }
 
 function createTray() {
@@ -84,7 +88,7 @@ const messageData = (event, message) => message ?? event?.data ?? event;
 
 function startServerProcess() {
   const workerPath = path.join(electronDir, 'server-worker.js');
-  serverProcess = utilityProcess.fork(workerPath, [], { serviceName: 'AI Usage Monitor server', stdio: 'pipe' });
+  serverProcess = utilityProcess.fork(workerPath, [], { serviceName: 'AI Usage Monitor server', stdio: 'pipe', execArgv: ['--expose-gc', '--max-old-space-size=256'] });
   serverProcess.stderr?.on('data', (chunk) => console.error(`Server worker: ${chunk}`));
   serverProcess.stdout?.on('data', (chunk) => console.log(`Server worker: ${chunk}`));
   return new Promise((resolve, reject) => {
@@ -113,18 +117,45 @@ function stopServerProcess() {
   });
 }
 
+function closeToTray() {
+  if (closePromise) return closePromise;
+  const currentWindow = window;
+  window = null;
+  closingToTray = true;
+  currentWindow?.removeListener('close', handleWindowClose);
+  currentWindow?.destroy();
+  closePromise = stopServerProcess().finally(() => {
+    closingToTray = false;
+    closePromise = null;
+  });
+  return closePromise;
+}
+
+async function openWindow() {
+  if (window) return showWindow();
+  if (closePromise) await closePromise;
+  if (window) return showWindow();
+  if (openPromise) return openPromise;
+  openPromise = (async () => {
+    const url = await startServerProcess();
+    createWindow(url);
+    showWindow();
+  })().finally(() => { openPromise = null; });
+  return openPromise;
+}
+
 async function start() {
   const dataDir = path.join(app.getPath('userData'), 'data');
   migrateDatabase(dataDir);
   process.env.AI_USAGE_DATA_DIR = dataDir;
 
-  const url = await startServerProcess();
-  createWindow(url);
   createTray();
+  await openWindow();
 }
 
 if (singleInstance) {
   app.on('second-instance', showWindow);
+  app.on('window-all-closed', () => {});
   app.whenReady().then(start).catch((error) => {
     console.error(`AI Usage Monitor failed to start: ${error.message}`);
     app.quit();
@@ -135,6 +166,9 @@ if (singleInstance) {
     event.preventDefault();
     quitting = true;
     tray?.destroy();
+    window?.removeListener('close', handleWindowClose);
+    window?.destroy();
+    window = null;
     await stopServerProcess();
     app.quit();
   });

@@ -18,9 +18,15 @@ const cost = `COALESCE(s.reported_cost_usd, CASE WHEN p.model IS NOT NULL THEN $
 const ACTIVITY_VERSION = 2;
 let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not_connected' } };
 let adtentionCache = { at: 0, value: null };
+let initialRefreshTimer = null;
 const adtentionApi = (process.env.ADTENTION_API || 'https://api.adtention.ai').replace(/\/+$/, '');
 
-function refresh() { const result = { codex: collectCodex(db), opencode: collectOpenCode(db) }; sourceState = result; return result; }
+function refresh() {
+  const result = { codex: collectCodex(db, { isolated: true }), opencode: collectOpenCode(db, { isolated: true }) };
+  sourceState = result;
+  if (typeof global.gc === 'function') global.gc();
+  return result;
+}
 async function adtentionBalance() {
   if (Date.now() - adtentionCache.at < 15000) return adtentionCache.value;
   const kvFile = path.join(os.homedir(), '.local', 'state', 'opencode', 'kv.json');
@@ -177,7 +183,8 @@ export function startServer({ open = false, port = process.env.PORT ? Number(pro
       const address = server.address();
       const url = `http://127.0.0.1:${address.port}`;
       console.log(`AI Usage Monitor: ${url}`);
-      setTimeout(() => {
+      initialRefreshTimer = setTimeout(() => {
+        initialRefreshTimer = null;
         try { refresh(); } catch (error) { console.error(`Initial refresh failed: ${error.message}`); }
       }, 1000);
       if (open) {
@@ -196,6 +203,7 @@ export function startServer({ open = false, port = process.env.PORT ? Number(pro
 }
 
 export function stopServer() {
+  if (initialRefreshTimer) { clearTimeout(initialRefreshTimer); initialRefreshTimer = null; }
   if (!server.listening) return Promise.resolve();
   return new Promise((resolve) => server.close(() => { db.close(); resolve(); }));
 }

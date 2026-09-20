@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 
 export const defaultCodexRoot = () => path.join(os.homedir(), '.codex', 'sessions');
 export const defaultCodexAuth = () => path.join(os.homedir(), '.codex', 'auth.json');
@@ -76,12 +78,48 @@ function filesUnder(root) {
     }
   };
   visit(root);
-  return found;
+  return found.sort();
+}
+
+function statSignature(file) {
+  try {
+    const stat = fs.statSync(file);
+    return `${file}:${stat.size}:${stat.mtimeMs}`;
+  } catch { return `${file}:missing`; }
+}
+
+function sourceSignature(files) {
+  return files.map(statSignature).join('|');
+}
+
+function openCodeSignature(file) {
+  const main = fs.statSync(file);
+  let walSize = 0;
+  try { walSize = fs.statSync(`${file}-wal`).size; } catch {}
+  return `${file}:${main.size}:${main.mtimeMs}:wal:${walSize}`;
+}
+
+function readLinesSync(file, onLine) {
+  const descriptor = fs.openSync(file, 'r');
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let remainder = '';
+  try {
+    let bytesRead;
+    while ((bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null)) > 0) {
+      const lines = `${remainder}${buffer.subarray(0, bytesRead).toString('utf8')}`.split(/\r?\n/);
+      remainder = lines.pop() || '';
+      for (const line of lines) onLine(line);
+    }
+    if (remainder) onLine(remainder);
+  } finally { fs.closeSync(descriptor); }
 }
 
 const integer = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const timestampMs = (value) => Number.isNaN(Date.parse(value || '')) ? null : Date.parse(value);
 const parisHour = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: '2-digit', hourCycle: 'h23' });
+const codexCaches = new WeakMap();
+const openCodeCaches = new WeakMap();
+const OPEN_CODE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 // Contract shared by current Codex collector and future OpenCode/Claude collectors.
 export function normalizeSession(session) {
@@ -108,13 +146,14 @@ const applyProjectOverride = (project) => {
 export function parseCodexSession(file) {
   let meta = {}, startedAt = null, endedAt = null;
   const snap = (candidate) => ({ input: integer(candidate.input_tokens), cached: integer(candidate.cached_input_tokens), output: integer(candidate.output_tokens), reasoning: integer(candidate.reasoning_output_tokens), total: integer(candidate.total_tokens) });
-  const snapshots = [];
   const modelSeq = [];
   let currentModel = null;
-  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-    if (!line) continue;
+  const buckets = new Map();
+  let previous = null;
+  readLinesSync(file, (line) => {
+    if (!line) return;
     let record;
-    try { record = JSON.parse(line); } catch { continue; }
+    try { record = JSON.parse(line); } catch { return; }
     const stamp = record.timestamp;
     if (stamp && (!startedAt || stamp < startedAt)) startedAt = stamp;
     if (stamp && (!endedAt || stamp > endedAt)) endedAt = stamp;
@@ -124,33 +163,38 @@ export function parseCodexSession(file) {
       if (!modelSeq.includes(currentModel)) modelSeq.push(currentModel);
     }
     const candidate = record.payload?.info?.total_token_usage;
-    if (candidate) snapshots.push({ stamp, usage: snap(candidate), model: currentModel });
-  }
-  const stem = path.basename(file, '.jsonl'); // rollout-<ts>-<uuid>[_<fork>]
-  const fork = stem.includes('_') ? stem.slice(stem.lastIndexOf('_') + 1) : '';
-  const sessionId = meta.session_id || meta.id || stem;
-  const fileId = fork ? `${sessionId}~${fork}` : sessionId; // ids scopés au fichier : deltas disjoints, pas de collision
-  const fallbackModel = currentModel || meta.model || (modelSeq.length === 1 ? modelSeq[0] : null);
-  const buckets = new Map();
-  let previous = null;
-  for (const snapshot of snapshots) {
-    if (!previous) { previous = snapshot; continue; }
-    if (snapshot.usage.total < previous.usage.total) { previous = snapshot; continue; }
+    if (!candidate) return;
+    const snapshot = { stamp, usage: snap(candidate), model: currentModel };
+    if (!previous) { previous = snapshot; return; }
+    if (snapshot.usage.total < previous.usage.total) { previous = snapshot; return; }
     const day = snapshot.stamp ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date(snapshot.stamp)) : null;
     const hour = snapshot.stamp ? parisHour.format(new Date(snapshot.stamp)) : null;
-    const model = snapshot.model || fallbackModel;
-    const key = `${day || 'unknown'}\u0000${hour || ''}\u0000${model || ''}`;
-    const delta = buckets.get(key) || { day, hour, model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+    const key = `${day || 'unknown'}\u0000${hour || ''}\u0000${snapshot.model || ''}`;
+    const delta = buckets.get(key) || { day, hour, model: snapshot.model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
     delta.firstAt = delta.firstAt || snapshot.stamp;
     delta.lastAt = snapshot.stamp || delta.lastAt;
     for (const field of ['input', 'cached', 'output', 'reasoning', 'total']) delta[field] += Math.max(0, snapshot.usage[field] - previous.usage[field]);
     buckets.set(key, delta);
     previous = snapshot;
+  });
+  const stem = path.basename(file, '.jsonl'); // rollout-<ts>-<uuid>[_<fork>]
+  const fork = stem.includes('_') ? stem.slice(stem.lastIndexOf('_') + 1) : '';
+  const sessionId = meta.session_id || meta.id || stem;
+  const fileId = fork ? `${sessionId}~${fork}` : sessionId; // ids scopés au fichier : deltas disjoints, pas de collision
+  const fallbackModel = currentModel || meta.model || (modelSeq.length === 1 ? modelSeq[0] : null);
+  const relabeledBuckets = new Map();
+  for (const bucket of buckets.values()) {
+    bucket.model ||= fallbackModel;
+    const key = `${bucket.day || 'unknown'}\u0000${bucket.hour || ''}\u0000${bucket.model || ''}`;
+    const current = relabeledBuckets.get(key);
+    if (!current) relabeledBuckets.set(key, bucket);
+    else for (const field of ['input', 'cached', 'output', 'reasoning', 'total']) current[field] += bucket[field];
   }
+  const finalBuckets = relabeledBuckets;
   const base = { platform: 'codex', provider: 'openai', agent: meta.originator === 'Codex Desktop' ? 'Codex Desktop' : 'Codex CLI', project: applyProjectOverride(meta.cwd), sourcePath: file };
-  if (!buckets.size) return normalizeSession({ ...base, id: fileId, model: fallbackModel, startedAt: meta.timestamp || startedAt, endedAt });
-  return [...buckets.values()].map((bucket) => {
-    const isSingle = buckets.size === 1;
+  if (!finalBuckets.size) return normalizeSession({ ...base, id: fileId, model: fallbackModel, startedAt: meta.timestamp || startedAt, endedAt });
+  return [...finalBuckets.values()].map((bucket) => {
+    const isSingle = finalBuckets.size === 1;
     const dayStamp = bucket.day ? new Date(`${bucket.day}T12:00:00Z`).toISOString() : (meta.timestamp || startedAt);
     const id = isSingle ? fileId : `${fileId}:${bucket.day || 'unknown'}${bucket.hour ? `:${bucket.hour}` : ''}${bucket.model ? `:${bucket.model}` : ''}`;
     const start = timestampMs(bucket.firstAt), end = timestampMs(bucket.lastAt);
@@ -182,14 +226,57 @@ export function importSessions(db, sessions) {
   return imported;
 }
 
-export function collectCodex(db, { root = defaultCodexRoot() } = {}) {
+function runIsolatedCollector(mode, source) {
+  const worker = path.join(path.dirname(fileURLToPath(import.meta.url)), 'opencode-worker.mjs');
+  const child = spawnSync(process.execPath, [worker, mode, source], {
+    encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : process.env.ELECTRON_RUN_AS_NODE },
+  });
+  if (child.error) throw child.error;
+  if (child.status !== 0) throw new Error(child.stderr.trim() || `${mode} worker exited with ${child.status}`);
+  return JSON.parse(child.stdout);
+}
+
+function importIsolatedProjection(db, payload, platform) {
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM sessions WHERE platform=?').run(platform);
+    const imported = importSessions(db, payload.sessions);
+    db.exec('COMMIT');
+    return { ...payload.result, imported };
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw error;
+  }
+}
+
+export function collectCodex(db, { root = defaultCodexRoot(), isolated = false } = {}) {
   const files = filesUnder(root);
-    const parsed = files.flatMap((f) => {
-      const r = parseCodexSession(f);
-      return Array.isArray(r) ? r : [r];
-    });
-    const sourceSessions = new Set(parsed.filter(Boolean).map((row) => row.id.split('~')[0].split(':')[0]));
-    const sessions = parsed.filter((r) => r && (r.total || r.input || r.output || r.reasoning || r.cached)); // fichiers fantômes (delta 0) hors table
+  const signature = sourceSignature(files), cache = codexCaches.get(db) || { root, signature: null, files: new Map() };
+  if (cache.root === root && cache.signature === signature) return { ...cache.result, imported: 0, skipped: true };
+  cache.root = root;
+  if (isolated) {
+    try {
+      const result = importIsolatedProjection(db, runIsolatedCollector('codex', root), 'codex');
+      cache.signature = signature;
+      cache.result = result;
+      codexCaches.set(db, cache);
+      return result;
+    } catch (error) {
+      return { imported: 0, source: root, platform: 'codex', status: 'not_connected', error: error.message };
+    }
+  }
+  for (const file of files) {
+    const fileSignature = statSignature(file), previous = cache.files.get(file);
+    if (!previous || previous.signature !== fileSignature) {
+      const parsed = parseCodexSession(file);
+      cache.files.set(file, { signature: fileSignature, sessions: Array.isArray(parsed) ? parsed : [parsed] });
+    }
+  }
+  for (const file of cache.files.keys()) if (!files.includes(file)) cache.files.delete(file);
+  const parsed = [...cache.files.values()].flatMap(({ sessions }) => sessions);
+  const sourceSessions = new Set(parsed.filter(Boolean).map((row) => row.id.split('~')[0].split(':')[0]));
+  const sessions = parsed.filter((r) => r && (r.total || r.input || r.output || r.reasoning || r.cached)); // fichiers fantômes (delta 0) hors table
   db.exec('BEGIN');
   try {
     // Reconstruction complète : les fichiers (deltas disjoints, ids scopés) sont la vérité terrain.
@@ -197,7 +284,11 @@ export function collectCodex(db, { root = defaultCodexRoot() } = {}) {
     if (files.length) db.prepare("DELETE FROM sessions WHERE platform='codex'").run();
     const imported = importSessions(db, sessions);
     db.exec('COMMIT');
-    return { imported, sourceSessions: sourceSessions.size, source: root, platform: 'codex' };
+    const result = { imported, sourceSessions: sourceSessions.size, source: root, platform: 'codex' };
+    cache.signature = signature;
+    cache.result = result;
+    codexCaches.set(db, cache);
+    return result;
   } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }
 }
 
@@ -257,17 +348,48 @@ export function recordLimitsHistory(db, limits, now = Date.now()) {
   return 1;
 }
 
-export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
+function collectOpenCodeIsolated(db, file) {
+  return importIsolatedProjection(db, runIsolatedCollector('opencode', file), 'opencode');
+}
+
+export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated = false } = {}) {
   if (!fs.existsSync(file)) return { imported: 0, source: file, platform: 'opencode', status: 'not_connected' };
+  const signature = openCodeSignature(file);
+  const cached = openCodeCaches.get(db);
+  if (cached?.file === file && Date.now() - cached.collectedAt < OPEN_CODE_REFRESH_INTERVAL_MS) return { ...cached.result, imported: 0, skipped: true, stale: true };
+  if (cached?.file === file && cached.signature === signature) return { ...cached.result, imported: 0, skipped: true };
+  if (isolated) {
+    try {
+      const result = collectOpenCodeIsolated(db, file);
+      openCodeCaches.set(db, { file, signature, result, collectedAt: Date.now() });
+      return result;
+    } catch (error) {
+      return { imported: 0, source: file, platform: 'opencode', status: 'not_connected', error: error.message };
+    }
+  }
   let source;
   try {
     source = new DatabaseSync(file, { readOnly: true });
+    source.exec('PRAGMA cache_size = -8192; PRAGMA mmap_size = 0;');
     const rows = source.prepare(`
         SELECT s.id, s.parent_id, s.directory, s.agent, s.model, s.cost, s.time_created, s.time_updated,
         s.tokens_input, s.tokens_output, s.tokens_reasoning, s.tokens_cache_read, p.name project_name
       FROM session s LEFT JOIN project p ON p.id=s.project_id
     `).all();
     const hasMessage = source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='message'").get();
+    const messageStatement = hasMessage ? source.prepare(`
+      SELECT json_extract(data, '$.modelID') model_id,
+        json_extract(data, '$.providerID') provider_id,
+        json_extract(data, '$.tokens.input') input_tokens,
+        json_extract(data, '$.tokens.cache.read') cached_tokens,
+        json_extract(data, '$.tokens.output') output_tokens,
+        json_extract(data, '$.tokens.reasoning') reasoning_tokens,
+        json_extract(data, '$.tokens.total') total_tokens,
+        json_extract(data, '$.time.created') created_at,
+        json_extract(data, '$.time.completed') completed_at
+      FROM message
+      WHERE session_id=? AND json_valid(data)
+    `) : null;
     const sessions = rows.flatMap((row) => {
       let model = row.model, modelMeta = null;
       try { modelMeta = JSON.parse(row.model); model = modelMeta.id || row.model; } catch { /* OpenCode may store plain model ID. */ }
@@ -281,15 +403,13 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
       // ventilation exacte: aggregate message tokens per modelID + per Paris day (session peut s'étaler sur plusieurs jours)
       if (hasMessage) {
         try {
-          const msgs = source.prepare("SELECT data FROM message WHERE session_id=?").all(row.id);
-          if (msgs.length) {
-            const perDayModel = new Map();
-            for (const m of msgs) {
-              let data; try { data = JSON.parse(m.data); } catch { continue; }
-              const mid = data.modelID || model;
-              const prov = data.providerID || base.provider;
-              const t = data.tokens || {};
-              const ts = data.time?.created || data.time?.completed || row.time_created;
+          const perDayModel = new Map();
+          let hasMessages = false;
+          for (const message of messageStatement.iterate(row.id)) {
+              hasMessages = true;
+              const mid = message.model_id || model;
+              const prov = message.provider_id || base.provider;
+              const ts = message.created_at || message.completed_at || row.time_created;
               const localDay = ts ? new Date(Number(ts)).toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' }) : null;
               const localHour = ts ? parisHour.format(new Date(Number(ts))) : null;
               const key = localDay ? `${mid}__${localDay}__${localHour || ''}` : mid;
@@ -297,14 +417,14 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
               cur.provider = prov || cur.provider;
               if (ts != null && (cur.firstAt == null || ts < cur.firstAt)) cur.firstAt = ts;
               if (ts != null && (cur.lastAt == null || ts > cur.lastAt)) cur.lastAt = ts;
-              cur.input += integer(t.input);
-              cur.cached += integer(t.cache?.read);
-              cur.output += integer(t.output);
-              cur.reasoning += integer(t.reasoning);
-              cur.total += integer(t.total || (integer(t.input)+integer(t.cache?.read)+integer(t.output)+integer(t.reasoning)));
+              cur.input += integer(message.input_tokens);
+              cur.cached += integer(message.cached_tokens);
+              cur.output += integer(message.output_tokens);
+              cur.reasoning += integer(message.reasoning_tokens);
+              cur.total += integer(message.total_tokens || (integer(message.input_tokens) + integer(message.cached_tokens) + integer(message.output_tokens) + integer(message.reasoning_tokens)));
               perDayModel.set(key, cur);
-            }
-            if (perDayModel.size) {
+          }
+            if (hasMessages && perDayModel.size) {
               return [...perDayModel.values()].map((agg) => {
                 const day = agg.day || iso(row.time_created)?.slice(0,10);
                 const id = agg.day ? `opencode:${row.id}:${agg.model}:${agg.day}:${agg.hour || 'unknown'}` : `opencode:${row.id}:${agg.model}`;
@@ -317,7 +437,6 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
                 });
               });
             }
-          }
         } catch { /* fallback to session aggregate */ }
       }
       return [normalizeSession({
@@ -333,7 +452,9 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase() } = {}) {
       db.prepare("DELETE FROM sessions WHERE platform='opencode'").run();
       const imported = importSessions(db, sessions);
       db.exec('COMMIT');
-      return { imported, sourceSessions: rows.filter((row) => !row.parent_id).length, source: file, platform: 'opencode', status: 'connected' };
+      const result = { imported, sourceSessions: rows.filter((row) => !row.parent_id).length, source: file, platform: 'opencode', status: 'connected' };
+      openCodeCaches.set(db, { file, signature, result, collectedAt: Date.now() });
+      return result;
     } catch (error) {
       try { db.exec('ROLLBACK'); } catch {}
       throw error;

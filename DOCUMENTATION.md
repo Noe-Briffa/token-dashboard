@@ -372,6 +372,8 @@ La projection OpenCode est reconstruite à chaque collecte :
 
 Ce choix évite de conserver des sessions fantômes.
 
+Dans l'application Electron, la lecture OpenCode est exécutée dans un processus Node isolé. Le processus traite la base source puis renvoie uniquement la projection au serveur principal ; sa mémoire native est ainsi libérée à la fin de la collecte. Une collecte OpenCode lourde n'est relancée qu'au maximum toutes les cinq minutes, même si l'interface se rafraîchit toutes les quinze secondes.
+
 ## 8. Base SQLite
 
 La base locale est :
@@ -671,9 +673,11 @@ Puis elle recharge `/api/data`.
 `/api/refresh` exécute :
 
 ```text
-collectCodex(db)
-collectOpenCode(db)
+collectCodex(db, { isolated: true })
+collectOpenCode(db, { isolated: true })
 ```
+
+Les collecteurs isolés renvoient leurs lignes normalisées au serveur principal. Le worker Electron utilise aussi un garbage collector explicite et un plafond de heap V8 de `256 MB`.
 
 ### Actualisation automatique actuelle
 
@@ -1088,7 +1092,7 @@ Le README historique mentionne des sessions détaillées. La version actuelle du
 
 ### Collecte fréquente
 
-L'actualisation automatique relance les deux collecteurs toutes les quinze secondes. Codex peut reconstruire sa projection à partir des fichiers JSONL et OpenCode peut reconstruire sa projection depuis la base source. Sur un historique très volumineux, cela peut augmenter les lectures disque.
+L'actualisation automatique relance l'endpoint toutes les quinze secondes. Codex et OpenCode utilisent des processus isolés pour éviter de conserver leur mémoire de parsing dans le worker Electron. OpenCode conserve sa dernière projection pendant au plus cinq minutes avant une nouvelle lecture complète de la base source.
 
 ### Schéma OpenCode externe
 

@@ -25,6 +25,7 @@
       "src/**/*",
       "package.json"
     ],
+    "asarUnpack": ["src/**/*.js", "src/**/*.mjs"],
     "directories": { "output": "release" },
     "win": { "target": "nsis", "icon": "assets/icon.ico" },
     "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true }

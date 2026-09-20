@@ -44,7 +44,9 @@ test('imports Codex usage with platform and normalizes future collector contract
     { timestamp: '2026-08-31T10:02:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 60, output_tokens: 20, reasoning_output_tokens: 10, total_tokens: 130 } } } }
   ]; fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
   const db = openDatabase(path.join(directory, 'usage.sqlite'));
-  collectCodex(db, { root: path.join(directory, 'sessions') });
+  const first = collectCodex(db, { root: path.join(directory, 'sessions') });
+  const second = collectCodex(db, { root: path.join(directory, 'sessions') });
+  assert.equal(first.imported, 1); assert.equal(second.skipped, true); assert.equal(second.imported, 0);
   const codex = db.prepare('SELECT platform, agent, model, total_tokens FROM sessions WHERE id=?').get('abc');
   assert.equal(codex.platform, 'codex'); assert.equal(codex.agent, 'Codex Desktop'); assert.equal(codex.model, 'gpt-test'); assert.equal(codex.total_tokens, 130);
   const future = normalizeSession({ platform: 'opencode', agent: 'OpenCode', id: 'open-1', sourcePath: 'db', model: 'x', input: 3, cached: 1, output: 2, reasoning: 0, total: 5 });
@@ -77,6 +79,7 @@ test('imports OpenCode model IDs, reported cost and cache reads', () => {
   source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); INSERT INTO project VALUES ('p1','Demo'); INSERT INTO session VALUES ('s1','p1',NULL,'C:/demo','build','{"id":"provider/model","providerID":"openai","variant":"fast"}',0.42,1000,61000,100,25,15,75);`); source.close();
   const result = collectOpenCode(target, { file: sourceFile });
   assert.equal(result.status, 'connected'); assert.equal(result.imported, 1);
+  assert.equal(collectOpenCode(target, { file: sourceFile }).skipped, true);
   const row = target.prepare('SELECT platform, provider, model, project, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, reported_cost_usd FROM sessions WHERE id=?').get('opencode:s1');
   assert.equal(row.platform, 'opencode'); assert.equal(row.provider, 'openai'); assert.equal(row.model, 'provider/model'); assert.equal(row.project, 'Demo'); assert.equal(row.input_tokens, 100); assert.equal(row.cached_input_tokens, 75); assert.equal(row.total_tokens, 215); assert.equal(row.reported_cost_usd, 0.42);
   target.close(); fs.rmSync(directory, { recursive: true, force: true });
