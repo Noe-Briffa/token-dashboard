@@ -13,9 +13,13 @@ try {
   db = openDatabase(database);
   const result = mode === 'codex' ? collectCodex(db, { root: source }) : collectOpenCode(db, { file: source });
   const sessions = db.prepare(`
-    SELECT id, platform, provider, agent, source_path, project, model, started_at, ended_at,
-      duration_seconds, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens,
-      total_tokens, reported_cost_usd
+    SELECT id, platform, provider, agent,
+      source_path AS sourcePath, project, model,
+      started_at AS startedAt, ended_at AS endedAt,
+      duration_seconds AS durationSeconds,
+      input_tokens AS input, cached_input_tokens AS cached,
+      output_tokens AS output, reasoning_tokens AS reasoning,
+      total_tokens AS total, reported_cost_usd AS reportedCost
     FROM sessions WHERE platform=?
   `).all(mode === 'codex' ? 'codex' : 'opencode');
   process.stdout.write(JSON.stringify({ result, sessions }));

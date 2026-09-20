@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { collectCodex, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase, parseCodexSession, recordLimitsHistory } from '../src/collector.js';
 import { mergeLegacyData } from '../src/storage.js';
@@ -94,6 +95,22 @@ test('imports OpenCode model IDs, reported cost and cache reads', () => {
   const row = target.prepare('SELECT platform, provider, model, project, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, reported_cost_usd FROM sessions WHERE id=?').get('opencode:s1');
   assert.equal(row.platform, 'opencode'); assert.equal(row.provider, 'openai'); assert.equal(row.model, 'provider/model'); assert.equal(row.project, 'Demo'); assert.equal(row.input_tokens, 100); assert.equal(row.cached_input_tokens, 75); assert.equal(row.total_tokens, 215); assert.equal(row.reported_cost_usd, 0.42);
   target.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('worker preserves the shared session contract after JSON round-trip', () => {
+  const directory = temp(), sourceFile = path.join(directory, 'opencode.db');
+  const source = new DatabaseSync(sourceFile);
+  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); INSERT INTO project VALUES ('p1','Demo'); INSERT INTO session VALUES ('s1','p1',NULL,'C:/demo','build','{"id":"gpt-test","providerID":"openai"}',0,1000,61000,100,25,15,75);`);
+  source.close();
+  const worker = path.resolve('src/opencode-worker.mjs');
+  const child = spawnSync(process.execPath, [worker, 'opencode', sourceFile], { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  const row = JSON.parse(child.stdout).sessions.find((session) => session.id === 'opencode:s1');
+  assert.equal(row.sourcePath, 'opencode:s1');
+  assert.equal(row.startedAt, '1970-01-01T00:00:01.000Z');
+  assert.equal(row.endedAt, '1970-01-01T00:01:01.000Z');
+  assert.equal(row.source_path, undefined);
+  fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test('rebuilds OpenCode projection and reports source sessions separately from segments', () => {
