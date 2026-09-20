@@ -10,6 +10,10 @@
     "start": "node src/server.js",
     "start:open": "node src/server.js --open",
     "desktop": "electron electron/main.js",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "pretauri:build": "npm run prepare:tauri-runtime",
+    "prepare:tauri-runtime": "node scripts/prepare-tauri-runtime.cjs",
     "icons": "electron scripts/generate-icons.cjs",
     "build:win": "electron-builder --win nsis",
     "collect": "node src/cli.js",
@@ -25,13 +29,28 @@
       "src/**/*",
       "package.json"
     ],
-    "asarUnpack": ["src/**/*.js", "src/**/*.mjs"],
-    "directories": { "output": "release" },
-    "win": { "target": "nsis", "icon": "assets/icon.ico" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true }
+    "asarUnpack": [
+      "src/**/*.js",
+      "src/**/*.mjs"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
-  "engines": { "node": ">=22.5" },
+  "engines": {
+    "node": ">=22.5"
+  },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5",
     "electron": "^38.0.0",
     "electron-builder": "^26.0.0"
   }

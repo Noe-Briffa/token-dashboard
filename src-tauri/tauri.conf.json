@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI Usage Monitor",
+  "version": "0.1.1",
+  "identifier": "com.noebr.aiusagemonitor.tauri",
+  "build": {
+    "frontendDist": "../public",
+    "devUrl": "http://127.0.0.1:62069"
+  },
+  "app": {
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["../assets/icon.ico"],
+    "resources": [
+      "../src/**/*",
+      "../public/**/*",
+      "../assets/**/*",
+      "runtime/node.exe"
+    ]
+  }
+}

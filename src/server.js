@@ -11,7 +11,7 @@ const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const publicDir = path.join(root, 'public'), dataDir = defaultDataDirectory(root);
 fs.mkdirSync(dataDir, { recursive: true });
 const db = openDatabase(path.join(dataDir, 'usage.sqlite'));
-const legacyDatabase = path.join(root, 'data', 'usage.sqlite');
+const legacyDatabase = path.join(process.env.AI_USAGE_LEGACY_DATA_DIR || path.join(root, 'data'), 'usage.sqlite');
 if (path.resolve(dataDir, 'usage.sqlite') !== path.resolve(legacyDatabase)) mergeLegacyData(db, legacyDatabase);
 const estimatedCost = `(s.input_tokens * COALESCE(p.input_usd_per_million,0) + s.cached_input_tokens * COALESCE(p.cached_input_usd_per_million,0) + s.output_tokens * COALESCE(p.output_usd_per_million,0) + s.reasoning_tokens * COALESCE(p.reasoning_usd_per_million,0)) / 1000000.0`;
 const cost = `COALESCE(s.reported_cost_usd, CASE WHEN p.model IS NOT NULL THEN ${estimatedCost} ELSE ${estimatedCost} END)`;
@@ -138,11 +138,15 @@ function savePricing(body) {
   return { saved: body.pricing.length };
 }
 let localCommit = null;
-try { localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 10000 }).toString().trim() || null; } catch { /* pas un clone git, maj auto désactivée */ }
+const gitRepository = fs.existsSync(path.join(root, '.git'));
+if (gitRepository) {
+  try { localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || null; } catch { /* pas un clone git, maj auto désactivée */ }
+}
 function pullUpdate() {
+  if (!gitRepository) throw new Error('Mise à jour intégrée indisponible dans cette installation');
   try {
-    const output = execFileSync('git', ['pull', '--ff-only'], { cwd: root, timeout: 120000 }).toString();
-    try { localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 10000 }).toString().trim() || null; } catch {}
+    const output = execFileSync('git', ['pull', '--ff-only'], { cwd: root, timeout: 120000, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    try { localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || null; } catch {}
     return { updated: true, output: output.trim().slice(-500) };
   } catch (error) { throw new Error((error.stderr?.toString().trim() || error.message).slice(-300) || 'git pull impossible'); }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "ai-usage-monitor-tauri"
+version = "0.1.1"
+description = "AI Usage Monitor Tauri shell"
+authors = ["Noe Briffa"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+url = "2"

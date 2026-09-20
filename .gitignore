@@ -5,6 +5,9 @@ release/
 dist/
 .gitnexus
 .playwright-cli/
+src-tauri/runtime/node.exe
+src-tauri/target/
+src-tauri/gen/
 # Tooling dev local uniquement, hors repo public
 .claude/
 AGENTS.md

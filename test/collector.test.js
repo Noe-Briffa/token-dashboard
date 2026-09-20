@@ -22,14 +22,22 @@ test('migrates existing sessions to codex platform without losing data', () => {
 test('merges legacy pricing and limits history without overwriting newer values', () => {
   const directory = temp(), legacyFile = path.join(directory, 'legacy.sqlite'), targetFile = path.join(directory, 'target.sqlite');
   const legacy = openDatabase(legacyFile);
-  legacy.prepare("INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, provider, pricing_unit, updated_at) VALUES ('codex', 'legacy-model', 1, 2, 3, 4, 'openai', 'per_1M_tokens', '2026-09-20T12:00:00.000Z')").run();
+  legacy.prepare("INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, cache_writes_usd_per_million, provider, pricing_unit, per_minute_usd, updated_at) VALUES ('codex', 'legacy-model', 1, 2, 3, 4, 5, 'openai', 'per_1M_tokens', 6, '2026-09-20T12:00:00.000Z')").run();
   legacy.prepare("INSERT INTO limits_history (taken_at, plan, primary_remaining, secondary_remaining) VALUES ('2026-09-20T12:00:00.000Z', 'plus', 80, 70)").run();
+  legacy.prepare("INSERT INTO app_settings (key, value) VALUES ('legacy_setting', 'enabled')").run();
+  legacy.prepare("UPDATE app_settings SET value='false' WHERE key='openai_subscription'").run();
+  importSessions(legacy, [{ platform: 'codex', agent: 'Codex CLI', id: 'legacy-session', sourcePath: 'legacy-session.jsonl', total: 123 }]);
   legacy.close();
   const target = openDatabase(targetFile);
-  mergeLegacyData(target, legacyFile);
-  const pricing = target.prepare("SELECT input_usd_per_million, output_usd_per_million FROM model_pricing WHERE platform='codex' AND model='legacy-model'").get();
-  assert.deepEqual({ ...pricing }, { input_usd_per_million: 1, output_usd_per_million: 3 });
+  assert.equal(mergeLegacyData(target, legacyFile), true);
+  const pricing = target.prepare("SELECT input_usd_per_million, output_usd_per_million, cache_writes_usd_per_million, per_minute_usd FROM model_pricing WHERE platform='codex' AND model='legacy-model'").get();
+  assert.deepEqual({ ...pricing }, { input_usd_per_million: 1, output_usd_per_million: 3, cache_writes_usd_per_million: 5, per_minute_usd: 6 });
   assert.equal(target.prepare("SELECT COUNT(*) n FROM limits_history WHERE taken_at='2026-09-20T12:00:00.000Z'").get().n, 1);
+  assert.equal(target.prepare("SELECT value FROM app_settings WHERE key='legacy_setting'").get().value, 'enabled');
+  assert.equal(target.prepare("SELECT value FROM app_settings WHERE key='openai_subscription'").get().value, 'false');
+  assert.equal(target.prepare("SELECT total_tokens FROM sessions WHERE id='legacy-session'").get().total_tokens, 123);
+  assert.ok(target.prepare("SELECT value FROM app_settings WHERE key='migration.electron.v1'").get().value);
+  assert.equal(mergeLegacyData(target, legacyFile), false);
   target.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 
