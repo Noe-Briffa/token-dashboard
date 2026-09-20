@@ -53,6 +53,7 @@ function applyTheme(preference) {
 const modeLabel = () => $('#cost-mode').value === 'api_cost' ? 'Estimation API' : 'Coût payé';
 const value = (row) => Number(row[$('#metric').value === 'cost' ? $('#cost-mode').value : 'total'] ?? 0);
 const formatted = (amount) => $('#metric').value === 'cost' ? money.format(amount) : compact.format(amount);
+const tokenThreshold = () => $('#metric').value === 'total' ? Math.max(0, Number($('#min-tokens')?.value) || 0) * 1e6 : 0;
 
 const modelPalette = [18, 48, 78, 108, 138, 168, 198, 228, 258, 288, 318, 348].map((hue) => `hsl(${hue} 68% 62%)`);
 const canonicalModel = (model) => String(model || 'Modèle inconnu').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -117,7 +118,8 @@ function filterQuery() {
   return query;
 }
 function renderDonut(id, totalId, rows, target) {
-  const usable = rows.filter((row) => value(row) > 0).sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0)); // ordre tokens stable : couleurs et positions fixes entre Tokens et Coût
+  const minimum = tokenThreshold();
+  const usable = rows.filter((row) => (Number(row.total) || 0) >= minimum && value(row) > 0).sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0)); // ordre tokens stable : couleurs et positions fixes entre Tokens et Coût
   const total = usable.reduce((sum, row) => sum + value(row), 0);
   const totalEl = $(`#${totalId}`);
   if (totalEl) totalEl.textContent = formatted(total);
@@ -430,7 +432,8 @@ $('#theme').addEventListener('change', () => {
   applyTheme(themePreference);
 });
 themeMedia.addEventListener('change', () => { if (themePreference === 'system') applyTheme('system'); });
-['#metric', '#cost-mode', '#platform', '#agent', '#model', '#project', '#from', '#to', '#chart-granularity'].forEach((id) => $(id).addEventListener('input', () => { if (id === '#from' || id === '#to') $('#period').value = 'custom'; load(); }));
+const updateTokenThresholdState = () => { $('#min-tokens').disabled = $('#metric').value !== 'total'; };
+['#metric', '#cost-mode', '#platform', '#agent', '#model', '#project', '#from', '#to', '#chart-granularity', '#min-tokens'].forEach((id) => $(id).addEventListener('input', () => { if (id === '#from' || id === '#to') $('#period').value = 'custom'; if (id === '#metric') updateTokenThresholdState(); load(); }));
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
 const normalizeRate = (input) => {
   const num = Number(input.value.trim().replace(',', '.'));
@@ -480,4 +483,4 @@ $('#update').onclick = async () => {
     location.reload();
   } catch (error) { alert(error.message); button.disabled = false; button.textContent = '↓ Nouvelle version'; }
 };
-setPeriod(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(); loadLimits(); checkVersion(); }, 15000);
+setPeriod(); updateTokenThresholdState(); watchTips(); load(); loadLimits(true); checkVersion().then(checkUpdate); setInterval(checkUpdate, 300000); setInterval(() => { load(); loadLimits(); checkVersion(); }, 15000);

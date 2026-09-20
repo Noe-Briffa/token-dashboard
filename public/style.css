@@ -146,6 +146,7 @@ select, input:not([type="checkbox"]) {
   font-size: 12px;
 }
 select:hover, input:not([type="checkbox"]):hover { border-color: var(--accent); }
+input:disabled { cursor: not-allowed; opacity: .55; }
 input::placeholder { color: var(--ink-muted); }
 
 
