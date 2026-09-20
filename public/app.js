@@ -345,8 +345,13 @@ function renderLimits(limits) {
 let limitsAt = 0;
 async function loadLimits(force = false) {
   if (!force && Date.now() - limitsAt < 60000) return;
-  try { renderLimits(await (await fetch('/api/limits')).json()); limitsAt = Date.now(); } catch { /* bandeau garde son état */ }
-  loadHistory(force);
+  const historyPromise = loadHistory(force);
+  try {
+    renderLimits(await (await fetch('/api/limits')).json());
+    limitsAt = Date.now();
+    await historyPromise;
+    paintHistory();
+  } catch { /* bandeau garde son état */ }
 }
 function renderSplit(s) {
   const mode = $('#cost-mode').value === 'api_cost' ? 'api' : 'paid';

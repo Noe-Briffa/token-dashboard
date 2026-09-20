@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { collectCodex, collectCodexLimits, collectOpenCode, openDatabase, recordLimitsHistory } from './collector.js';
+import { collectCodexLimits, collectCodexAsync, collectOpenCodeAsync, openDatabase, recordLimitsHistory } from './collector.js';
 import { defaultDataDirectory, mergeLegacyData } from './storage.js';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -19,13 +19,20 @@ const ACTIVITY_VERSION = 2;
 let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not_connected' } };
 let adtentionCache = { at: 0, value: null };
 let initialRefreshTimer = null;
+let refreshPromise = null;
 const adtentionApi = (process.env.ADTENTION_API || 'https://api.adtention.ai').replace(/\/+$/, '');
 
 function refresh() {
-  const result = { codex: collectCodex(db, { isolated: true }), opencode: collectOpenCode(db, { isolated: true }) };
-  sourceState = result;
-  if (typeof global.gc === 'function') global.gc();
-  return result;
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    const codex = await collectCodexAsync(db);
+    const opencode = await collectOpenCodeAsync(db);
+    const result = { codex, opencode };
+    sourceState = result;
+    if (typeof global.gc === 'function') global.gc();
+    return result;
+  })().finally(() => { refreshPromise = null; });
+  return refreshPromise;
 }
 async function adtentionBalance() {
   if (Date.now() - adtentionCache.at < 15000) return adtentionCache.value;
@@ -157,7 +164,7 @@ function readBody(req) { return new Promise((resolve, reject) => { let raw = '';
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   try {
-    if (req.method === 'POST' && url.pathname === '/api/refresh') return sendJson(res, refresh());
+    if (req.method === 'POST' && url.pathname === '/api/refresh') return sendJson(res, await refresh());
     if (url.pathname === '/api/adtention/balance') return sendJson(res, await adtentionBalance());
     if (req.method === 'POST' && url.pathname === '/api/pricing') return sendJson(res, savePricing(await readBody(req)));
     if (url.pathname === '/api/data') return sendJson(res, data(url.searchParams));
@@ -189,7 +196,7 @@ export function startServer({ open = false, port = process.env.PORT ? Number(pro
       console.log(`AI Usage Monitor: ${url}`);
       initialRefreshTimer = setTimeout(() => {
         initialRefreshTimer = null;
-        try { refresh(); } catch (error) { console.error(`Initial refresh failed: ${error.message}`); }
+        refresh().catch((error) => console.error(`Initial refresh failed: ${error.message}`));
       }, 1000);
       if (open) {
         try {

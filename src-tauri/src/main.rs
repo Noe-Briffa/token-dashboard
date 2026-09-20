@@ -11,6 +11,9 @@ use std::{
     thread,
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -125,7 +128,10 @@ fn start_server(app: &AppHandle) -> Result<(), String> {
     } else {
         root.join("data")
     };
-    let mut child = Command::new(node)
+    let mut command = Command::new(node);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let mut child = command
         .arg(script)
         .current_dir(&root)
         .env("AI_USAGE_DATA_DIR", data_dir)

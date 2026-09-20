@@ -4,7 +4,7 @@ Petit tableau de bord local pour suivre ta consommation Codex et OpenCode. Tout 
 
 ## Démarrage rapide
 
-Préreqis : Node.js 22.5 ou plus récent (`node --version`) et git.
+Prérequis : Node.js 22.5 ou plus récent (`node --version`) et git.
 
 ```powershell
 git clone https://github.com/Noe-Briffa/token-dashboard.git
@@ -27,29 +27,31 @@ $env:PORT=4318; npm start
 
 ## Application Windows
 
-Pour lancer la version desktop avec une fenêtre intégrée et une icône dans la zone de notification :
+La version Tauri ouvre le dashboard dans WebView2 et garde une icône dans la zone de notification :
 
 ```powershell
-npm run desktop
+npm run tauri:dev
 ```
 
 La fermeture de la fenêtre masque l'application dans le tray. Le menu clic droit permet de rouvrir le dashboard ou de quitter complètement l'application.
 
-Pour générer l'installateur Windows :
+Pour générer l'installateur Windows Tauri :
 
 ```powershell
-npm run build:win
+npm run tauri:build
 ```
 
-L'installateur est créé dans `release/`. Sous Windows, la version web et la version desktop partagent la base `%APPDATA%\ai-usage-monitor\data\usage.sqlite`, y compris les tarifs et l'historique des limites.
+L'installateur est créé dans `src-tauri/target/release/bundle/`. Sous Windows, la version web et la version desktop partagent la base `%APPDATA%\ai-usage-monitor\data\usage.sqlite`, y compris les tarifs et l'historique des limites.
 
-Le serveur classique utilise seulement le serveur HTTP et le pilote SQLite fournis avec Node. La version desktop utilise Electron et ses dépendances de packaging.
+Le serveur classique utilise le serveur HTTP et SQLite fournis avec Node. La version Tauri lance ce même serveur dans un processus Node, puis l'affiche dans WebView2. Le script `npm run desktop` reste disponible pour l'ancienne version Electron.
 
 ## Ce que tu y trouves
 
 Tokens par jour, semaine ou mois, répartition par modèle et par plateforme, sessions détaillées, coûts estimés via les tarifs que tu saisis dans "Prix des modèles". Les périodes 14, 30, 90, 180 et 365 jours sont disponibles, plus une période personnalisée. Le thème suit le système par défaut, avec un choix clair ou sombre dans l'en-tête.
 
 Un bandeau affiche tes limites Codex en temps réel : fenêtre 5 heures et fenêtre hebdo, en pourcent restant avec l'heure de reset. Il se rafraîchit toutes les 15 secondes et quand tu reviens sur l'onglet.
+
+L'historique des limites est lu dans SQLite pendant que les limites temps réel sont récupérées. Le tableau de bord peut donc afficher les points déjà enregistrés avant la fin de la requête réseau.
 
 `npm run collect` fait un import sans lancer le dashboard.
 

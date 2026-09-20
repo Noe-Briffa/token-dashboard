@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
@@ -237,6 +237,25 @@ function runIsolatedCollector(mode, source) {
   return JSON.parse(child.stdout);
 }
 
+function runIsolatedCollectorAsync(mode, source) {
+  const worker = path.join(path.dirname(fileURLToPath(import.meta.url)), 'opencode-worker.mjs');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [worker, mode, source], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : process.env.ELECTRON_RUN_AS_NODE },
+      windowsHide: true,
+    });
+    let stdout = '', stderr = '';
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', (status) => {
+      if (status !== 0) return reject(new Error(stderr.trim() || `${mode} worker exited with ${status}`));
+      try { resolve(JSON.parse(stdout)); } catch (error) { reject(error); }
+    });
+  });
+}
+
 function importIsolatedProjection(db, payload, platform) {
   db.exec('BEGIN');
   try {
@@ -290,6 +309,22 @@ export function collectCodex(db, { root = defaultCodexRoot(), isolated = false }
     codexCaches.set(db, cache);
     return result;
   } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }
+}
+
+export async function collectCodexAsync(db, { root = defaultCodexRoot() } = {}) {
+  const files = filesUnder(root);
+  const signature = sourceSignature(files), cache = codexCaches.get(db) || { root, signature: null, files: new Map() };
+  if (cache.root === root && cache.signature === signature) return { ...cache.result, imported: 0, skipped: true };
+  cache.root = root;
+  try {
+    const result = importIsolatedProjection(db, await runIsolatedCollectorAsync('codex', root), 'codex');
+    cache.signature = signature;
+    cache.result = result;
+    codexCaches.set(db, cache);
+    return result;
+  } catch (error) {
+    return { imported: 0, source: root, platform: 'codex', status: 'not_connected', error: error.message };
+  }
 }
 
 const iso = (milliseconds) => Number.isFinite(Number(milliseconds)) ? new Date(Number(milliseconds)).toISOString() : null;
@@ -350,6 +385,10 @@ export function recordLimitsHistory(db, limits, now = Date.now()) {
 
 function collectOpenCodeIsolated(db, file) {
   return importIsolatedProjection(db, runIsolatedCollector('opencode', file), 'opencode');
+}
+
+async function collectOpenCodeIsolatedAsync(db, file) {
+  return importIsolatedProjection(db, await runIsolatedCollectorAsync('opencode', file), 'opencode');
 }
 
 export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated = false } = {}) {
@@ -462,4 +501,19 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated
   } catch (error) {
     return { imported: 0, source: file, platform: 'opencode', status: 'not_connected', error: error.message };
   } finally { source?.close(); }
+}
+
+export async function collectOpenCodeAsync(db, { file = defaultOpenCodeDatabase() } = {}) {
+  if (!fs.existsSync(file)) return { imported: 0, source: file, platform: 'opencode', status: 'not_connected' };
+  const signature = openCodeSignature(file);
+  const cached = openCodeCaches.get(db);
+  if (cached?.file === file && Date.now() - cached.collectedAt < OPEN_CODE_REFRESH_INTERVAL_MS) return { ...cached.result, imported: 0, skipped: true, stale: true };
+  if (cached?.file === file && cached.signature === signature) return { ...cached.result, imported: 0, skipped: true };
+  try {
+    const result = await collectOpenCodeIsolatedAsync(db, file);
+    openCodeCaches.set(db, { file, signature, result, collectedAt: Date.now() });
+    return result;
+  } catch (error) {
+    return { imported: 0, source: file, platform: 'opencode', status: 'not_connected', error: error.message };
+  }
 }
