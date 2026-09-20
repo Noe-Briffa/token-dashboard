@@ -237,7 +237,7 @@ function runIsolatedCollector(mode, source) {
   return JSON.parse(child.stdout);
 }
 
-function runIsolatedCollectorAsync(mode, source) {
+function runIsolatedCollectorAsync(mode, source, timeoutMs = 120000) {
   const worker = path.join(path.dirname(fileURLToPath(import.meta.url)), 'opencode-worker.mjs');
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [worker, mode, source], {
@@ -248,8 +248,13 @@ function runIsolatedCollectorAsync(mode, source) {
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`${mode} worker timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
     child.once('close', (status) => {
+      clearTimeout(timer);
       if (status !== 0) return reject(new Error(stderr.trim() || `${mode} worker exited with ${status}`));
       try { resolve(JSON.parse(stdout)); } catch (error) { reject(error); }
     });
@@ -317,11 +322,8 @@ export async function collectCodexAsync(db, { root = defaultCodexRoot() } = {}) 
   if (cache.root === root && cache.signature === signature) return { ...cache.result, imported: 0, skipped: true };
   cache.root = root;
   try {
-    const result = importIsolatedProjection(db, await runIsolatedCollectorAsync('codex', root), 'codex');
-    cache.signature = signature;
-    cache.result = result;
-    codexCaches.set(db, cache);
-    return result;
+    // Reuse the in-process file cache: the isolated worker rebuilt all Codex history on every refresh.
+    return collectCodex(db, { root });
   } catch (error) {
     return { imported: 0, source: root, platform: 'codex', status: 'not_connected', error: error.message };
   }

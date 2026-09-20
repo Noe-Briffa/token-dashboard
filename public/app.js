@@ -511,7 +511,6 @@ themeMedia.addEventListener('change', () => { if (themePreference === 'system') 
 const updateTokenThresholdState = () => { $('#min-tokens').disabled = $('#metric').value !== 'total'; };
 ['#metric', '#cost-mode', '#platform', '#agent', '#model', '#project', '#from', '#to', '#chart-granularity', '#min-tokens'].forEach((id) => $(id).addEventListener('input', () => { if (id === '#from' || id === '#to') $('#period').value = 'custom'; if (id === '#metric') updateTokenThresholdState(); load(); }));
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
-setInterval(requestRefresh, 60_000);
 const normalizeRate = (input) => {
   const num = Number(input.value.trim().replace(',', '.'));
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');

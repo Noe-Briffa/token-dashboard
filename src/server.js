@@ -27,8 +27,8 @@ function refresh() {
   if (refreshPromise) return refreshPromise;
   refreshState = { running: true, result: null, error: null, startedAt: new Date().toISOString(), finishedAt: null };
   refreshPromise = (async () => {
-    const codex = await collectCodexAsync(db);
     const opencode = await collectOpenCodeAsync(db);
+    const codex = await collectCodexAsync(db);
     const result = { codex, opencode };
     sourceState = result;
     if (typeof global.gc === 'function') global.gc();
