@@ -45,6 +45,26 @@ L'installateur est créé dans `src-tauri/target/release/bundle/`. Sous Windows,
 
 Le serveur classique utilise le serveur HTTP et SQLite fournis avec Node. La version Tauri lance ce même serveur dans un processus Node, puis l'affiche dans WebView2. Le script `npm run desktop` reste disponible pour l'ancienne version Electron.
 
+### Mettre à jour l'application installée
+
+La version Tauri ne se met pas encore à jour automatiquement. Pour installer une nouvelle version :
+
+1. Ferme l'application.
+2. Télécharge le dernier installateur `.exe` depuis les GitHub Releases du projet.
+3. Lance l'installateur et garde le même dossier d'installation.
+4. Rouvre l'application.
+
+L'installateur remplace les fichiers de l'application. Tes sessions, tarifs et historiques restent dans `%APPDATA%\ai-usage-monitor\data\usage.sqlite`.
+
+### Publier une version
+
+La construction de l'application demande Rust et Cargo. Ces outils ne sont pas nécessaires pour utiliser l'installateur déjà créé.
+
+1. Mets à jour la version dans `src-tauri/tauri.conf.json` et `src-tauri/Cargo.toml`.
+2. Vérifie le projet avec `cargo check` depuis `src-tauri/`.
+3. Génère l'installateur avec `npm run tauri:build`.
+4. Publie le fichier `.exe` de `src-tauri/target/release/bundle/` dans une GitHub Release.
+
 ## Ce que tu y trouves
 
 Tokens par jour, semaine ou mois, répartition par modèle et par plateforme, sessions détaillées, coûts estimés via les tarifs que tu saisis dans "Prix des modèles". Les périodes 14, 30, 90, 180 et 365 jours sont disponibles, plus une période personnalisée. Le thème suit le système par défaut, avec un choix clair ou sombre dans l'en-tête.
