@@ -115,7 +115,23 @@ function filterQuery() {
   const query = new URLSearchParams();
   for (const key of ['platform', 'agent', 'model', 'project', 'from', 'to']) if ($(`#${key}`).value) query.set(key, $(`#${key}`).value);
   if ($('#period').value !== 'custom') query.set('period', $('#period').value);
+  const activityRange = selectedActivityRange();
+  query.set('activityFrom', activityRange.start); query.set('activityTo', activityRange.end);
   return query;
+}
+const dateOnly = (date) => date.toISOString().slice(0, 10);
+const addDays = (value, days) => { const date = new Date(`${value}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return dateOnly(date); };
+const mondayOf = (date) => { const value = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())); value.setUTCDate(value.getUTCDate() - (value.getUTCDay() + 6) % 7); return dateOnly(value); };
+const currentActivityWeek = () => { const now = new Date(); const start = mondayOf(now); return { start, end: addDays(start, 6) }; };
+let activityWeekStart = currentActivityWeek().start;
+let activityFollowsCurrent = true;
+function selectedActivityRange() { return { start: activityWeekStart, end: addDays(activityWeekStart, 6) }; }
+function formatActivityDate(value) { return new Date(`${value}T00:00:00Z`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); }
+function renderActivityControls(range) {
+  const current = currentActivityWeek(), selected = range || selectedActivityRange();
+  if ($('#activity-range')) $('#activity-range').textContent = `${formatActivityDate(selected.start)} → ${formatActivityDate(selected.end)}`;
+  if ($('#activity-next')) $('#activity-next').disabled = selected.start >= current.start;
+  if ($('#activity-current')) $('#activity-current').disabled = selected.start === current.start;
 }
 function renderDonut(id, totalId, rows, target) {
   const minimum = tokenThreshold();
@@ -203,11 +219,12 @@ function renderChart(days, range, pricing = []) {
 }
 const activityDayNames = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 const heatThresholds = [20e6, 40e6, 60e6, 80e6];
-function renderActivityHeatmap(cells = [], activityVersion = 0) {
+function renderActivityHeatmap(cells = [], activityVersion = 0, activityRange = null) {
   const el = $('#activity-heatmap'), summary = $('#activity-summary'), legend = $('#activity-legend');
   if (!el) return;
+  renderActivityControls(activityRange);
   if (legend) legend.innerHTML = `<strong>Tokens par cellule</strong><i class="heat-empty"></i><span>0</span>${heatThresholds.map((threshold, index) => `<i class="heat-level-${index + 1}"></i><span>${index === heatThresholds.length - 1 ? '> 80 M' : `≤ ${threshold / 1e6} M`}</span>`).join('')}<span class="activity-total-note">Totaux : échelle relative à leur maximum</span>`;
-  if (activityVersion !== 2 || !Array.isArray(cells) || cells.length !== 168) {
+  if (activityVersion !== 3 || !Array.isArray(cells) || cells.length !== 168) {
     el.innerHTML = '<p class="muted activity-empty">Redémarre l’application pour actualiser l’historique horaire.</p>';
     if (summary) summary.textContent = 'Version serveur à actualiser';
     return;
@@ -396,7 +413,7 @@ function render(data) {
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderActivityHeatmap(data.activity, data.activityVersion); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 let loadVersion = 0;
 let refreshPromise = null;
@@ -447,6 +464,7 @@ function requestRefresh() {
 }
 async function load(refresh = false) {
   const version = ++loadVersion;
+  if (activityFollowsCurrent) activityWeekStart = currentActivityWeek().start;
   let refreshResult = null;
   try {
     if (refresh) {
@@ -488,6 +506,9 @@ $('#refresh').onclick = () => {
     setTimeout(() => { button.disabled = false; button.textContent = 'Actualiser'; button.classList.remove('is-refreshing'); feedback.classList.remove('visible'); }, 1800);
   });
 };
+$('#activity-prev').onclick = () => { activityWeekStart = addDays(activityWeekStart, -7); activityFollowsCurrent = false; load(); };
+$('#activity-next').onclick = () => { const current = currentActivityWeek(); const next = addDays(activityWeekStart, 7); if (next <= current.start) { activityWeekStart = next; activityFollowsCurrent = next === current.start; load(); } };
+$('#activity-current').onclick = () => { activityWeekStart = currentActivityWeek().start; activityFollowsCurrent = true; load(); };
 window.addEventListener('scroll', () => {
   scrolling = true;
   clearTimeout(scrollTimer);

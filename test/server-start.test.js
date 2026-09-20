@@ -29,8 +29,9 @@ test('serves the dashboard before the initial collection finishes', async () => 
     });
     const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
     assert.equal(response.status, 200);
-    const data = await (await fetch(url + '/api/data?period=1', { signal: AbortSignal.timeout(1000) })).json();
-    assert.equal(data.activityVersion, 2);
+    const data = await (await fetch(url + '/api/data?from=2026-09-01&to=2026-09-02&activityFrom=2026-09-14&activityTo=2026-09-20', { signal: AbortSignal.timeout(1000) })).json();
+    assert.equal(data.activityVersion, 3);
+    assert.deepEqual(data.activityRange, { start: '2026-09-14', end: '2026-09-20' });
     assert.equal(data.activity.length, 168);
     assert.equal(data.activity.every((cell) => Number.isInteger(cell.dayIndex) && cell.dayIndex >= 0 && cell.dayIndex < 7 && cell.hour >= 0 && cell.hour < 24), true);
   } finally {

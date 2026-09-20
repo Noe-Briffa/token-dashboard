@@ -256,6 +256,12 @@ button.head-toggle:hover { color: var(--ink); background: none; border: none; te
 .chart-bars { position: absolute; inset: 24px 0 20px; display: flex; align-items: stretch; gap: 7px; width: 100%; min-width: 0; height: auto; padding: 0 2px; }
 .chart-bars.dense { min-width: 100%; }
 .activity-panel { overflow: hidden; }
+.activity-head { align-items: flex-start; }
+.activity-head h2 { margin-bottom: 3px; }
+.activity-controls { display: flex; align-items: center; gap: 5px; }
+.activity-controls button { min-width: 34px; padding: 6px 9px; }
+.activity-controls button:disabled { cursor: default; opacity: .45; }
+.activity-summary { margin: -8px 0 10px; }
 .activity-heatmap-wrap { overflow-x: auto; padding-bottom: 4px; }
 .activity-grid { display: grid; grid-template-columns: 64px repeat(24, minmax(18px, 1fr)) minmax(48px, 1.5fr); gap: 4px; min-width: 820px; }
 .activity-corner { min-height: 16px; }

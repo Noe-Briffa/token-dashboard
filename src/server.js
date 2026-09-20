@@ -15,7 +15,7 @@ const legacyDatabase = path.join(process.env.AI_USAGE_LEGACY_DATA_DIR || path.jo
 if (path.resolve(dataDir, 'usage.sqlite') !== path.resolve(legacyDatabase)) mergeLegacyData(db, legacyDatabase, process.env.AI_USAGE_MIGRATION_KEY);
 const estimatedCost = `(s.input_tokens * COALESCE(p.input_usd_per_million,0) + s.cached_input_tokens * COALESCE(p.cached_input_usd_per_million,0) + s.output_tokens * COALESCE(p.output_usd_per_million,0) + s.reasoning_tokens * COALESCE(p.reasoning_usd_per_million,0)) / 1000000.0`;
 const cost = `COALESCE(s.reported_cost_usd, CASE WHEN p.model IS NOT NULL THEN ${estimatedCost} ELSE ${estimatedCost} END)`;
-const ACTIVITY_VERSION = 2;
+const ACTIVITY_VERSION = 3;
 let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not_connected' } };
 let adtentionCache = { at: 0, value: null };
 let initialRefreshTimer = null;
@@ -99,6 +99,23 @@ function calendar(query) {
   for (let d = new Date(`${start}T12:00:00`); parisDateStr(d) <= finish; d.setDate(d.getDate() + 1)) days.push(parisDateStr(d));
   return { start, end, days };
 }
+const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+function shiftDate(value, days) {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function activityCalendar(query) {
+  const today = parisDateStr(new Date());
+  const todayDate = new Date(`${today}T12:00:00Z`);
+  const mondayOffset = (todayDate.getUTCDay() + 6) % 7;
+  const currentStart = shiftDate(today, -mondayOffset);
+  const requestedStart = query.get('activityFrom');
+  const requestedEnd = query.get('activityTo');
+  const start = isoDate.test(requestedStart || '') ? requestedStart : currentStart;
+  const end = isoDate.test(requestedEnd || '') ? requestedEnd : shiftDate(start, 6);
+  return { start, end };
+}
 const activityClock = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Paris', weekday: 'short', hour: '2-digit', hourCycle: 'h23' });
 const activityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 function activityHeatmap(base, params, price) {
@@ -118,14 +135,18 @@ function activityHeatmap(base, params, price) {
   return cells;
 }
 function data(query) {
-  const range = calendar(query), ranged = new URLSearchParams(query);
+  const range = calendar(query), activityRange = activityCalendar(query), ranged = new URLSearchParams(query);
   if (!ranged.get('from')) ranged.set('from', range.start); if (!ranged.get('to')) ranged.set('to', range.end);
   const { where, params } = filters(ranged), base = selectBase(where), price = costs();
+  const activityQuery = new URLSearchParams(query);
+  activityQuery.delete('from'); activityQuery.delete('to');
+  activityQuery.set('from', activityRange.start); activityQuery.set('to', activityRange.end);
+  const activityFilters = filters(activityQuery), activityBase = selectBase(activityFilters.where);
   const summary = db.prepare(`SELECT COUNT(*) sessions, COALESCE(SUM(s.input_tokens),0) input, COALESCE(SUM(s.cached_input_tokens),0) cached, COALESCE(SUM(s.output_tokens),0) output, COALESCE(SUM(s.reasoning_tokens),0) reasoning, COALESCE(SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens),0) total, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.input_tokens END),0) codex_input, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.cached_input_tokens END),0) codex_cached, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.input_tokens END),0) opencode_input, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.cached_input_tokens END),0) opencode_cached, COALESCE(SUM(s.cached_input_tokens * (COALESCE(p.input_usd_per_million,0) - COALESCE(p.cached_input_usd_per_million,0)) / 1000000.0),0) cache_saved, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost, SUM(${price.part.input}) input_api_cost, SUM(${price.part.cached}) cached_api_cost, SUM(${price.part.output}) output_api_cost, SUM(${price.part.reasoning}) reasoning_api_cost, SUM(${price.paidPart(price.part.input)}) input_paid_cost, SUM(${price.paidPart(price.part.cached)}) cached_paid_cost, SUM(${price.paidPart(price.part.output)}) output_paid_cost, SUM(${price.paidPart(price.part.reasoning)}) reasoning_paid_cost ${base}`).get(...params);
   const dailyRows = db.prepare(`SELECT date(s.started_at,'localtime') day, COALESCE(s.model,'Modèle inconnu') model, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY day, s.model`).all(...params);
   const byDay = new Map(range.days.map((day) => [day, []])); for (const row of dailyRows) byDay.get(row.day)?.push(row);
   const daily = range.days.map((day) => ({ day, series: byDay.get(day) }));
-  const activity = activityHeatmap(base, params, price);
+  const activity = activityHeatmap(activityBase, activityFilters.params, price);
   const models = db.prepare(`SELECT COALESCE(s.model,'Modèle inconnu') label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.model ORDER BY total DESC`).all(...params);
   const platforms = db.prepare(`SELECT s.platform label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.platform ORDER BY total DESC`).all(...params);
   const projects = db.prepare(`SELECT COALESCE(s.project,'Projet inconnu') label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.project ORDER BY total DESC`).all(...params);
@@ -133,7 +154,7 @@ function data(query) {
   const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
   const sourceRows = db.prepare('SELECT platform, COUNT(*) sessions FROM sessions GROUP BY platform').all();
   const sources = [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceState.codex.sourceSessions ?? (sourceRows.find((row) => row.platform === 'codex')?.sessions || 0) }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceState.opencode.sourceSessions ?? (sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0) }];
-  return { activityVersion: ACTIVITY_VERSION, summary, daily, activity, models, platforms, projects, options, pricing, range, sources };
+  return { activityVersion: ACTIVITY_VERSION, summary, daily, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
 }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');
