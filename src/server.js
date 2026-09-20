@@ -12,7 +12,7 @@ const publicDir = path.join(root, 'public'), dataDir = defaultDataDirectory(root
 fs.mkdirSync(dataDir, { recursive: true });
 const db = openDatabase(path.join(dataDir, 'usage.sqlite'));
 const legacyDatabase = path.join(process.env.AI_USAGE_LEGACY_DATA_DIR || path.join(root, 'data'), 'usage.sqlite');
-if (path.resolve(dataDir, 'usage.sqlite') !== path.resolve(legacyDatabase)) mergeLegacyData(db, legacyDatabase);
+if (path.resolve(dataDir, 'usage.sqlite') !== path.resolve(legacyDatabase)) mergeLegacyData(db, legacyDatabase, process.env.AI_USAGE_MIGRATION_KEY);
 const estimatedCost = `(s.input_tokens * COALESCE(p.input_usd_per_million,0) + s.cached_input_tokens * COALESCE(p.cached_input_usd_per_million,0) + s.output_tokens * COALESCE(p.output_usd_per_million,0) + s.reasoning_tokens * COALESCE(p.reasoning_usd_per_million,0)) / 1000000.0`;
 const cost = `COALESCE(s.reported_cost_usd, CASE WHEN p.model IS NOT NULL THEN ${estimatedCost} ELSE ${estimatedCost} END)`;
 const ACTIVITY_VERSION = 2;

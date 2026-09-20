@@ -114,17 +114,22 @@ fn start_server(app: &AppHandle) -> Result<(), String> {
     } else {
         node_runtime(app)?
     };
-    let data_dir = app
+    let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?
         .join("data");
-    let legacy_data_dir = if cfg!(windows) {
+    let data_dir = if cfg!(windows) {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|| root.clone())
+            .unwrap_or_else(|| app_data_dir.clone())
             .join("ai-usage-monitor")
             .join("data")
+    } else {
+        app_data_dir.clone()
+    };
+    let legacy_data_dir = if cfg!(windows) {
+        app_data_dir
     } else {
         root.join("data")
     };
@@ -136,6 +141,7 @@ fn start_server(app: &AppHandle) -> Result<(), String> {
         .current_dir(&root)
         .env("AI_USAGE_DATA_DIR", data_dir)
         .env("AI_USAGE_LEGACY_DATA_DIR", legacy_data_dir)
+        .env("AI_USAGE_MIGRATION_KEY", "migration.tauri.v1")
         .stdout(Stdio::piped())
         .stderr(if cfg!(debug_assertions) {
             Stdio::inherit()

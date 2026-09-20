@@ -38,6 +38,9 @@ test('merges legacy pricing and limits history without overwriting newer values'
   assert.equal(target.prepare("SELECT total_tokens FROM sessions WHERE id='legacy-session'").get().total_tokens, 123);
   assert.ok(target.prepare("SELECT value FROM app_settings WHERE key='migration.electron.v1'").get().value);
   assert.equal(mergeLegacyData(target, legacyFile), false);
+  assert.equal(mergeLegacyData(target, legacyFile, 'migration.tauri.v1'), true);
+  assert.ok(target.prepare("SELECT value FROM app_settings WHERE key='migration.tauri.v1'").get().value);
+  assert.equal(mergeLegacyData(target, legacyFile, 'migration.tauri.v1'), false);
   target.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 

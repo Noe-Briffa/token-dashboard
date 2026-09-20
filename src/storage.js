@@ -20,9 +20,9 @@ function nonZeroPricing(row) {
 const migrationKey = 'migration.electron.v1';
 const tableColumns = (db, table) => new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
 
-export function mergeLegacyData(target, legacyFile) {
+export function mergeLegacyData(target, legacyFile, migrationKeyOverride = migrationKey) {
   if (!fs.existsSync(legacyFile) || !hasTable(target, 'app_settings')) return false;
-  if (target.prepare('SELECT 1 FROM app_settings WHERE key=?').get(migrationKey)) return false;
+  if (target.prepare('SELECT 1 FROM app_settings WHERE key=?').get(migrationKeyOverride)) return false;
   let source;
   try { source = new DatabaseSync(legacyFile, { readOnly: true }); } catch { return false; }
   try {
@@ -66,7 +66,7 @@ export function mergeLegacyData(target, legacyFile) {
           if (!current || (defaultSettings.has(row.key) && current.value === 'true')) upsertSetting.run(row.key, row.value);
         }
       }
-      target.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').run(migrationKey, new Date().toISOString());
+      target.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').run(migrationKeyOverride, new Date().toISOString());
       target.exec('COMMIT');
     } catch (error) { try { target.exec('ROLLBACK'); } catch {} throw error; }
   } finally { source.close(); }
