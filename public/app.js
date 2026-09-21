@@ -128,9 +128,13 @@ const mondayOf = (date) => { const value = new Date(Date.UTC(date.getFullYear(),
 const currentActivityWeek = () => { const now = new Date(); const start = mondayOf(now); return { start, end: addDays(start, 6) }; };
 const activityPreferenceKey = 'usage-monitor-activity-week';
 const skillsLimitPreferenceKey = 'usage-monitor-skills-limit';
-const normalizeSkillsLimit = (value) => Math.min(100, Math.max(1, Math.round(Number(value) || 10)));
-const readSkillsLimit = () => { try { return normalizeSkillsLimit(localStorage.getItem(skillsLimitPreferenceKey)); } catch { return 10; } };
-let skillsLimit = readSkillsLimit();
+const modelLimitPreferenceKey = 'usage-monitor-models-limit';
+const projectLimitPreferenceKey = 'usage-monitor-projects-limit';
+const normalizeDisplayLimit = (value) => Math.min(100, Math.max(1, Math.round(Number(value) || 5)));
+const readDisplayLimit = (key) => { try { return normalizeDisplayLimit(localStorage.getItem(key)); } catch { return 5; } };
+let skillsLimit = readDisplayLimit(skillsLimitPreferenceKey);
+let modelLimit = readDisplayLimit(modelLimitPreferenceKey);
+let projectLimit = readDisplayLimit(projectLimitPreferenceKey);
 const readActivityWeek = () => { try { const value = sessionStorage.getItem(activityPreferenceKey); return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : null; } catch { return null; } };
 let activityWeekStart = readActivityWeek() || currentActivityWeek().start;
 let activityFollowsCurrent = !readActivityWeek();
@@ -147,18 +151,25 @@ function renderDonut(id, totalId, rows, target) {
   const minimum = tokenThreshold();
   const overallTotal = rows.reduce((sum, row) => sum + value(row), 0);
   const usable = rows.filter((row) => (Number(row.total) || 0) >= minimum && value(row) > 0).sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0)); // ordre tokens stable : couleurs et positions fixes entre Tokens et Coût
-  const total = usable.reduce((sum, row) => sum + value(row), 0);
+  const limit = target === 'model' ? modelLimit : target === 'project' ? projectLimit : null;
+  const visible = limit ? usable.slice(0, limit) : usable;
+  const other = limit && usable.length > limit ? usable.slice(limit).reduce((sum, row) => ({ total: sum.total + (Number(row.total) || 0), api_cost: sum.api_cost + (Number(row.api_cost) || 0), paid_cost: sum.paid_cost + (Number(row.paid_cost) || 0) }), { total: 0, api_cost: 0, paid_cost: 0 }) : null;
+  const chartRows = other ? [...visible, { label: 'Autres', ...other }] : visible;
+  const total = chartRows.reduce((sum, row) => sum + value(row), 0);
   const totalEl = $(`#${totalId}`);
   if (totalEl) totalEl.textContent = formatted(overallTotal);
+  const limitSummary = $(`#${target}-limit-summary`);
+  if (limitSummary) limitSummary.textContent = `${number.format(Math.min(limit || usable.length, usable.length))}/${number.format(usable.length)}`;
   if (!total) { $(`#${id}`).innerHTML = '<span class="muted">Aucune donnée chiffrable.</span>'; return; }
   let offset = 0;
-  const arcs = usable.map((row) => {
-    const dash = value(row) / total * 263.89, color = colorFor(row, target);
+  const arcs = chartRows.map((row) => {
+    const dash = value(row) / total * 263.89, color = row.label === 'Autres' ? 'var(--line-strong)' : colorFor(row, target);
     offset += dash;
     return `<circle cx="50" cy="50" r="42" fill="none" stroke="${color}" stroke-width="14" stroke-dasharray="${dash} ${263.89 - dash}" stroke-dashoffset="${-(offset - dash)}" transform="rotate(-90 50 50)"/>`;
   }).join('');
   const current = $(`#${target}`)?.value || '';
-  const legend = usable.map((row) => {
+  const legend = chartRows.map((row) => {
+    if (row.label === 'Autres') return `<span class="legend-other"><i class="dot" style="background:var(--line-strong)"></i><label>Autres</label><small>${formatted(value(row))}</small></span>`;
     const active = current && current === row.label;
     const title = active ? 'Cliquer pour afficher tous' : `Filtrer par ${row.label}`;
       return `<button data-filter="${target}" data-value="${escape(row.label)}" class="${active ? 'active' : ''}" data-tip="${escape(title)}"><i class="dot" style="background:${colorFor(row, target)}"></i><label>${escape(row.label)}</label><small>${formatted(value(row))}</small></button>`;
@@ -654,13 +665,18 @@ themeMedia.addEventListener('change', () => { if (themePreference === 'system') 
 const updateTokenThresholdState = () => { $('#min-tokens').disabled = $('#metric').value !== 'total'; };
 ['#metric', '#cost-mode', '#platform', '#agent', '#model', '#project', '#from', '#to', '#chart-granularity', '#min-tokens'].forEach((id) => $(id).addEventListener('input', () => { if (id === '#from' || id === '#to') $('#period').value = 'custom'; if (id === '#metric') updateTokenThresholdState(); load(); }));
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
-$('#skills-limit').value = String(skillsLimit);
-$('#skills-limit').addEventListener('change', () => {
-  skillsLimit = normalizeSkillsLimit($('#skills-limit').value);
-  $('#skills-limit').value = String(skillsLimit);
-  try { localStorage.setItem(skillsLimitPreferenceKey, String(skillsLimit)); } catch { /* preference remains session-only */ }
-  load();
-});
+const bindDisplayLimit = (id, key, assign) => {
+  $(id).value = String(readDisplayLimit(key));
+  $(id).addEventListener('change', () => {
+    const limit = normalizeDisplayLimit($(id).value);
+    assign(limit); $(id).value = String(limit);
+    try { localStorage.setItem(key, String(limit)); } catch { /* preference remains session-only */ }
+    load();
+  });
+};
+bindDisplayLimit('#skills-limit', skillsLimitPreferenceKey, (value) => { skillsLimit = value; });
+bindDisplayLimit('#model-limit', modelLimitPreferenceKey, (value) => { modelLimit = value; });
+bindDisplayLimit('#project-limit', projectLimitPreferenceKey, (value) => { projectLimit = value; });
 const normalizeRate = (input) => {
   const num = Number(input.value.trim().replace(',', '.'));
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');
