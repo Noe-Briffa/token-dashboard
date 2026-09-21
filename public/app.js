@@ -130,11 +130,11 @@ const activityPreferenceKey = 'usage-monitor-activity-week';
 const skillsLimitPreferenceKey = 'usage-monitor-skills-limit';
 const modelLimitPreferenceKey = 'usage-monitor-models-limit';
 const projectLimitPreferenceKey = 'usage-monitor-projects-limit';
-const normalizeDisplayLimit = (value) => Math.min(100, Math.max(1, Math.round(Number(value) || 5)));
-const readDisplayLimit = (key) => { try { return normalizeDisplayLimit(localStorage.getItem(key)); } catch { return 5; } };
+const normalizeDisplayLimit = (value, fallback = 5) => Math.min(100, Math.max(1, Math.round(Number(value) || fallback)));
+const readDisplayLimit = (key, fallback = 5) => { try { return normalizeDisplayLimit(localStorage.getItem(key), fallback); } catch { return fallback; } };
 let skillsLimit = readDisplayLimit(skillsLimitPreferenceKey);
 let modelLimit = readDisplayLimit(modelLimitPreferenceKey);
-let projectLimit = readDisplayLimit(projectLimitPreferenceKey);
+let projectLimit = readDisplayLimit(projectLimitPreferenceKey, 4);
 const readActivityWeek = () => { try { const value = sessionStorage.getItem(activityPreferenceKey); return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : null; } catch { return null; } };
 let activityWeekStart = readActivityWeek() || currentActivityWeek().start;
 let activityFollowsCurrent = !readActivityWeek();
@@ -665,8 +665,8 @@ themeMedia.addEventListener('change', () => { if (themePreference === 'system') 
 const updateTokenThresholdState = () => { $('#min-tokens').disabled = $('#metric').value !== 'total'; };
 ['#metric', '#cost-mode', '#platform', '#agent', '#model', '#project', '#from', '#to', '#chart-granularity', '#min-tokens'].forEach((id) => $(id).addEventListener('input', () => { if (id === '#from' || id === '#to') $('#period').value = 'custom'; if (id === '#metric') updateTokenThresholdState(); load(); }));
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
-const bindDisplayLimit = (id, key, assign) => {
-  $(id).value = String(readDisplayLimit(key));
+const bindDisplayLimit = (id, key, assign, fallback = 5) => {
+  $(id).value = String(readDisplayLimit(key, fallback));
   $(id).addEventListener('change', () => {
     const limit = normalizeDisplayLimit($(id).value);
     assign(limit); $(id).value = String(limit);
@@ -676,7 +676,7 @@ const bindDisplayLimit = (id, key, assign) => {
 };
 bindDisplayLimit('#skills-limit', skillsLimitPreferenceKey, (value) => { skillsLimit = value; });
 bindDisplayLimit('#model-limit', modelLimitPreferenceKey, (value) => { modelLimit = value; });
-bindDisplayLimit('#project-limit', projectLimitPreferenceKey, (value) => { projectLimit = value; });
+bindDisplayLimit('#project-limit', projectLimitPreferenceKey, (value) => { projectLimit = value; }, 4);
 const normalizeRate = (input) => {
   const num = Number(input.value.trim().replace(',', '.'));
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');
