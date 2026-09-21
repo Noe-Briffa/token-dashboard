@@ -1,95 +1,100 @@
 # Token Dashboard
 
-Petit tableau de bord local pour suivre ta consommation Codex et OpenCode. Tout reste sur ta machine : les sessions sont lues en local, stockées dans SQLite, et le dashboard tourne sur http://127.0.0.1 avec un port affiché au démarrage.
+Token Dashboard est un tableau de bord local pour suivre la consommation de Codex et OpenCode. Les sessions restent sur ta machine : elles sont lues localement, stockées dans SQLite, puis affichées dans une interface servie par Node sur `http://127.0.0.1`.
 
 ## Démarrage rapide
 
-Prérequis : Node.js 22.5 ou plus récent (`node --version`) et git.
+Prérequis : Node.js 22.5 ou plus récent (`node --version`) et Git.
 
 ```powershell
 git clone https://github.com/Noe-Briffa/token-dashboard.git
 cd token-dashboard
 ```
 
-Ensuite, au choix :
+Sous Windows, double-clique sur `start.bat`. Sous macOS ou Linux, lance `./start.sh`. Le navigateur s'ouvre sur l'adresse locale du dashboard.
 
-Double-clic (le plus simple) : `start.bat` sous Windows, `./start.sh` sous Mac ou Linux. Le navigateur s'ouvre tout seul sur la bonne adresse.
-
-Ou en ligne de commande :
+Tu peux aussi démarrer le serveur depuis un terminal :
 
 ```powershell
+# ouvre le navigateur automatiquement
 npm run start:open
-# sans ouverture auto du navigateur :
+
+# démarre le serveur sans ouvrir le navigateur
 npm start
-# pour forcer un port fixe :
+
+# utilise un port fixe
 $env:PORT=4318; npm start
 ```
 
 ## Application Windows
 
-La version Tauri ouvre le dashboard dans WebView2 et garde une icône dans la zone de notification :
+La version Tauri ouvre le dashboard dans WebView2 et ajoute une icône dans la zone de notification.
 
 ```powershell
 npm run tauri:dev
 ```
 
-La fermeture de la fenêtre masque l'application dans le tray. Le menu clic droit permet de rouvrir le dashboard ou de quitter complètement l'application.
+Fermer la fenêtre masque l'application dans le tray. Le menu contextuel permet de rouvrir le dashboard ou de quitter complètement l'application.
 
-Pour générer l'installateur Windows Tauri :
+Pour générer l'installateur :
 
 ```powershell
 npm run tauri:build
 ```
 
-L'installateur est créé dans `src-tauri/target/release/bundle/`. Sous Windows, la version web et la version desktop partagent la base `%APPDATA%\ai-usage-monitor\data\usage.sqlite`, y compris les tarifs et l'historique des limites.
+Le fichier `.exe` apparaît dans `src-tauri/target/release/bundle/`. La version web et la version Tauri utilisent la même base Windows, située dans `%APPDATA%\ai-usage-monitor\data\usage.sqlite`. Les tarifs et l'historique des limites y sont conservés.
 
-Le serveur classique utilise le serveur HTTP et SQLite fournis avec Node. La version Tauri lance ce même serveur dans un processus Node, puis l'affiche dans WebView2. Le script `npm run desktop` reste disponible pour l'ancienne version Electron.
+Le serveur classique utilise le serveur HTTP et SQLite intégrés à Node. Tauri lance ce même serveur dans un processus Node, puis l'affiche dans WebView2. Le script `npm run desktop` reste disponible pour l'ancienne version Electron.
 
 ### Mettre à jour l'application installée
 
-La version Tauri ne se met pas encore à jour automatiquement. Pour installer une nouvelle version :
+La version Tauri ne se met pas encore à jour automatiquement.
 
 1. Ferme l'application.
 2. Télécharge le dernier installateur `.exe` depuis les GitHub Releases du projet.
-3. Lance l'installateur et garde le même dossier d'installation.
+3. Lance l'installateur dans le même dossier.
 4. Rouvre l'application.
 
-L'installateur remplace les fichiers de l'application. Tes sessions, tarifs et historiques restent dans `%APPDATA%\ai-usage-monitor\data\usage.sqlite`.
+L'installateur remplace les fichiers de l'application. Les sessions, les tarifs et l'historique restent dans `%APPDATA%\ai-usage-monitor\data\usage.sqlite`.
 
 ### Publier une version
 
-La construction de l'application demande Rust et Cargo. Ces outils ne sont pas nécessaires pour utiliser l'installateur déjà créé.
+La construction de l'application demande Rust et Cargo. Ces outils ne sont pas nécessaires pour utiliser un installateur déjà créé.
 
 1. Mets à jour la version dans `src-tauri/tauri.conf.json` et `src-tauri/Cargo.toml`.
-2. Vérifie le projet avec `cargo check` depuis `src-tauri/`.
+2. Lance `cargo check` depuis `src-tauri/`.
 3. Génère l'installateur avec `npm run tauri:build`.
 4. Publie le fichier `.exe` de `src-tauri/target/release/bundle/` dans une GitHub Release.
 
-## Ce que tu y trouves
+## Fonctionnalités
 
-Tokens par jour, semaine ou mois, répartition par modèle et par plateforme, sessions détaillées, coûts estimés via les tarifs que tu saisis dans "Prix des modèles". Les périodes 14, 30, 90, 180 et 365 jours sont disponibles, plus une période personnalisée. Le thème suit le système par défaut, avec un choix clair ou sombre dans l'en-tête.
+Le dashboard affiche les tokens par jour, semaine ou mois, ainsi que leur répartition par modèle, plateforme et projet. Il donne accès aux sessions détaillées et aux coûts estimés à partir des tarifs saisis dans « Prix des modèles ».
 
-Un bandeau affiche tes limites Codex en temps réel : fenêtre 5 heures et fenêtre hebdo, en pourcent restant avec l'heure de reset. Il se rafraîchit toutes les 15 secondes et quand tu reviens sur l'onglet.
+Les périodes de 14, 30, 90, 180 et 365 jours sont disponibles, avec une période personnalisée. Le thème suit le système par défaut, avec un choix clair ou sombre dans l'en-tête.
 
-L'historique des limites est lu dans SQLite pendant que les limites temps réel sont récupérées. Le tableau de bord peut donc afficher les points déjà enregistrés avant la fin de la requête réseau.
+Un bandeau affiche les limites Codex en temps réel pour la fenêtre de 5 heures et la fenêtre hebdomadaire. Il indique le pourcentage restant et l'heure de réinitialisation. Les données sont rafraîchies toutes les 15 secondes et lorsque tu reviens sur l'onglet.
 
-`npm run collect` fait un import sans lancer le dashboard.
+L'historique des limites est lu dans SQLite pendant la récupération des limites temps réel. Le dashboard peut donc afficher les points déjà enregistrés avant la fin de la requête réseau.
 
-## Données
+Les appels explicites aux skills OpenCode sont regroupés par jour et par agent. Les limites d'affichage des skills, modèles et projets sont réglables séparément dans l'interface.
 
-Codex est lu depuis `~/.codex/sessions`. OpenCode est lu depuis `~/.local/share/opencode/opencode.db` quand le fichier existe, sinon la source s'affiche comme non connectée et le reste continue de marcher.
+`npm run collect` importe les données sans lancer le dashboard.
 
-Les limites Codex viennent de ta session ChatGPT locale (`~/.codex/auth.json`), lue via le backend OpenAI. Ton token ne quitte jamais la machine autrement que pour cette requête, et il n'est jamais écrit dans les logs. Si la session a expiré, le bandeau l'indique, relance Codex pour la renouveler.
+## Données et confidentialité
 
-La base locale vit dans `data/usage.sqlite` (ignorée par git). Les tarifs saisis dans le dashboard sont conservés dedans. Pour repartir de zéro, arrête l'app et supprime ce fichier, il sera recréé au prochain lancement.
+Codex est lu depuis `~/.codex/sessions`. OpenCode est lu depuis `~/.local/share/opencode/opencode.db` lorsque le fichier existe. Si la base OpenCode est absente, sa source est signalée comme non connectée et le reste du dashboard continue de fonctionner.
+
+Les limites Codex viennent de ta session ChatGPT locale (`~/.codex/auth.json`) via le backend OpenAI. Le token n'est pas écrit dans les logs. Si la session a expiré, le bandeau l'indique et tu peux relancer Codex pour la renouveler.
+
+La base locale se trouve dans `data/usage.sqlite` et reste ignorée par Git. Les tarifs saisis dans le dashboard y sont conservés. Pour repartir de zéro, arrête l'application puis supprime ce fichier. Il sera recréé au prochain lancement.
 
 ## Dépannage
 
-Node trop vieux : mets à jour vers Node 22.5 ou plus récent, sinon le pilote SQLite intégré refuse de démarrer.
+Si Node est trop ancien, mets-le à jour vers la version 22.5 ou plus récente. Le pilote SQLite intégré ne démarre pas avec une version antérieure.
 
-Le navigateur ne s'ouvre pas : recopie l'adresse `http://127.0.0.1:...` affichée dans la console.
+Si le navigateur ne s'ouvre pas, recopie dans ton navigateur l'adresse `http://127.0.0.1:...` affichée dans la console.
 
-Aucune session : vérifie que `~/.codex/sessions` existe sur cette machine. Les imports sont idempotents, tu peux relancer sans risque de doublons.
+Si aucune session n'apparaît, vérifie que `~/.codex/sessions` existe sur la machine. Les imports sont idempotents et peuvent être relancés sans créer de doublons.
 
 ## Tests
 
