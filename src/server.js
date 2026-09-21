@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { collectCodexLimits, collectCodexAsync, collectOpenCodeAsync, openDatabase, recordLimitsHistory } from './collector.js';
+import { collectCodexLimits, collectCodexAsync, collectOpenCodeAsync, collectOpenCodeSkillsAsync, openDatabase, recordLimitsHistory } from './collector.js';
 import { defaultDataDirectory, mergeLegacyData } from './storage.js';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -17,9 +17,11 @@ const estimatedCost = `(s.input_tokens * COALESCE(p.input_usd_per_million,0) + s
 const cost = `COALESCE(s.reported_cost_usd, CASE WHEN p.model IS NOT NULL THEN ${estimatedCost} ELSE ${estimatedCost} END)`;
 const ACTIVITY_VERSION = 3;
 let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not_connected' } };
+let skillSourceState = { status: 'loading' };
 let adtentionCache = { at: 0, value: null };
 let initialRefreshTimer = null;
 let refreshPromise = null;
+let skillRefreshPromise = null;
 let refreshState = { running: false, result: null, error: null, startedAt: null, finishedAt: null };
 const adtentionApi = (process.env.ADTENTION_API || 'https://api.adtention.ai').replace(/\/+$/, '');
 
@@ -27,9 +29,10 @@ function refresh() {
   if (refreshPromise) return refreshPromise;
   refreshState = { running: true, result: null, error: null, startedAt: new Date().toISOString(), finishedAt: null };
   refreshPromise = (async () => {
+    const skills = await refreshSkills();
     const opencode = await collectOpenCodeAsync(db);
     const codex = await collectCodexAsync(db);
-    const result = { codex, opencode };
+    const result = { codex, opencode, skills };
     sourceState = result;
     if (typeof global.gc === 'function') global.gc();
     return result;
@@ -41,6 +44,18 @@ function refresh() {
     throw error;
   }).finally(() => { refreshPromise = null; });
   return refreshPromise;
+}
+function refreshSkills() {
+  if (skillRefreshPromise) return skillRefreshPromise;
+  skillSourceState = { status: 'loading' };
+  skillRefreshPromise = collectOpenCodeSkillsAsync(db).then((result) => {
+    skillSourceState = result;
+    return result;
+  }).catch((error) => {
+    skillSourceState = { status: 'not_connected', error: error.message };
+    return skillSourceState;
+  }).finally(() => { skillRefreshPromise = null; });
+  return skillRefreshPromise;
 }
 async function adtentionBalance() {
   if (Date.now() - adtentionCache.at < 15000) return adtentionCache.value;
@@ -125,6 +140,14 @@ function dailyAgents(base, params, days) {
   for (const row of rows) grouped.get(row.day)?.push({ agent: row.agent || 'OpenCode', sessions: Number(row.sessions) || 0 });
   return days.map((day) => ({ day, agents: grouped.get(day) }));
 }
+function dailySkills(days, query) {
+  if (query.get('platform') && query.get('platform') !== 'opencode') return days.map((day) => ({ day, skills: [] }));
+  const agent = query.get('agent');
+  const rows = db.prepare(`SELECT day, skill, COUNT(*) activations FROM opencode_skill_events WHERE day BETWEEN ? AND ?${agent ? ' AND agent=?' : ''} GROUP BY day, skill ORDER BY day DESC, activations DESC, skill`).all(...[days[0], days.at(-1), ...(agent ? [agent] : [])]);
+  const grouped = new Map(days.map((day) => [day, []]));
+  for (const row of rows) grouped.get(row.day)?.push({ skill: row.skill, activations: Number(row.activations) || 0 });
+  return days.map((day) => ({ day, skills: grouped.get(day) }));
+}
 const activityClock = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Paris', weekday: 'short', hour: '2-digit', hourCycle: 'h23' });
 const activityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 function activityHeatmap(base, params, price) {
@@ -156,6 +179,7 @@ function data(query) {
   const byDay = new Map(range.days.map((day) => [day, []])); for (const row of dailyRows) byDay.get(row.day)?.push(row);
   const daily = range.days.map((day) => ({ day, series: byDay.get(day) }));
   const agentDaily = dailyAgents(base, params, range.days);
+  const skillDaily = dailySkills(range.days, ranged);
   const activity = activityHeatmap(activityBase, activityFilters.params, price);
   const models = db.prepare(`SELECT COALESCE(s.model,'Modèle inconnu') label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.model ORDER BY total DESC`).all(...params);
   const platforms = db.prepare(`SELECT s.platform label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.platform ORDER BY total DESC`).all(...params);
@@ -164,7 +188,9 @@ function data(query) {
   const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
   const sourceRows = db.prepare('SELECT platform, COUNT(*) sessions FROM sessions GROUP BY platform').all();
   const sources = [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceState.codex.sourceSessions ?? (sourceRows.find((row) => row.platform === 'codex')?.sessions || 0) }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceState.opencode.sourceSessions ?? (sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0) }];
-  return { activityVersion: ACTIVITY_VERSION, summary, daily, agentDaily, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
+  const cachedSkills = db.prepare('SELECT COUNT(*) count FROM opencode_skill_events').get().count;
+  const skillStatus = Number(cachedSkills) > 0 ? 'connected' : skillSourceState.status;
+  return { activityVersion: ACTIVITY_VERSION, summary, daily, agentDaily, skillDaily, skillStatus, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
 }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');

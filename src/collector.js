@@ -45,6 +45,15 @@ export function openDatabase(file) {
     );
     CREATE INDEX IF NOT EXISTS limits_history_taken_at ON limits_history(taken_at);
     CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS opencode_skill_events (
+      id TEXT PRIMARY KEY,
+      day TEXT NOT NULL,
+      skill TEXT NOT NULL,
+      agent TEXT,
+      time_created INTEGER NOT NULL,
+      imported_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS opencode_skill_events_day ON opencode_skill_events(day);
     INSERT OR IGNORE INTO app_settings (key, value) VALUES ('codex_desktop_subscription', 'true');
     INSERT OR IGNORE INTO app_settings (key, value) SELECT 'openai_subscription', value FROM app_settings WHERE key='codex_desktop_subscription';
     INSERT OR IGNORE INTO app_settings (key, value) VALUES ('openai_subscription', 'true');
@@ -119,6 +128,7 @@ const timestampMs = (value) => Number.isNaN(Date.parse(value || '')) ? null : Da
 const parisHour = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: '2-digit', hourCycle: 'h23' });
 const codexCaches = new WeakMap();
 const openCodeCaches = new WeakMap();
+const openCodeSkillCaches = new WeakMap();
 const OPEN_CODE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 // Contract shared by current Codex collector and future OpenCode/Claude collectors.
@@ -226,9 +236,9 @@ export function importSessions(db, sessions) {
   return imported;
 }
 
-function runIsolatedCollector(mode, source) {
+function runIsolatedCollector(mode, source, args = []) {
   const worker = path.join(path.dirname(fileURLToPath(import.meta.url)), 'opencode-worker.mjs');
-  const child = spawnSync(process.execPath, [worker, mode, source], {
+  const child = spawnSync(process.execPath, [worker, mode, source, ...args], {
     encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : process.env.ELECTRON_RUN_AS_NODE },
   });
@@ -237,10 +247,10 @@ function runIsolatedCollector(mode, source) {
   return JSON.parse(child.stdout);
 }
 
-function runIsolatedCollectorAsync(mode, source, timeoutMs = 120000) {
+function runIsolatedCollectorAsync(mode, source, timeoutMs = 120000, args = []) {
   const worker = path.join(path.dirname(fileURLToPath(import.meta.url)), 'opencode-worker.mjs');
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [worker, mode, source], {
+    const child = spawn(process.execPath, [worker, mode, source, ...args], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : process.env.ELECTRON_RUN_AS_NODE },
       windowsHide: true,
     });
@@ -266,8 +276,9 @@ function importIsolatedProjection(db, payload, platform) {
   try {
     db.prepare('DELETE FROM sessions WHERE platform=?').run(platform);
     const imported = importSessions(db, payload.sessions);
+    const skillEventsImported = platform === 'opencode' ? importOpenCodeSkillEvents(db, payload.skillEvents) : 0;
     db.exec('COMMIT');
-    return { ...payload.result, imported };
+    return { ...payload.result, imported, skillEventsImported, skills: payload.skills || [] };
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch {}
     throw error;
@@ -334,6 +345,70 @@ export async function collectCodexAsync(db, { root = defaultCodexRoot() } = {}) 
 }
 
 const iso = (milliseconds) => Number.isFinite(Number(milliseconds)) ? new Date(Number(milliseconds)).toISOString() : null;
+const parisDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' });
+
+export function parseOpenCodeSkillEvents(rows) {
+  return rows.flatMap((row) => {
+    const skill = String(row.skill || '').trim();
+    const timestamp = Number(row.time_created);
+    if (!row.id || !skill || !Number.isFinite(timestamp)) return [];
+    return [{ id: row.id, day: parisDate.format(new Date(timestamp)), skill, agent: String(row.agent || '').trim() || null, time_created: timestamp }];
+  });
+}
+
+export function parseOpenCodeSkills(rows) {
+  const counts = new Map();
+  for (const row of parseOpenCodeSkillEvents(rows.map((item, index) => ({ id: item.id || `row-${index}`, ...item })))) {
+    const key = `${row.day}\u0000${row.skill}\u0000${row.agent || ''}`;
+    const current = counts.get(key) || { day: row.day, skill: row.skill, agent: row.agent, activations: 0 };
+    current.activations++;
+    counts.set(key, current);
+  }
+  return [...counts.values()].sort((a, b) => a.day.localeCompare(b.day) || b.activations - a.activations || a.skill.localeCompare(b.skill));
+}
+
+function readOpenCodeSkillEventsFromDatabase(source, sinceMs = 0) {
+  const hasPart = source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='part'").get();
+  if (!hasPart) return [];
+  const rows = source.prepare(`
+    SELECT p.id, p.time_created, s.agent, json_extract(p.data, '$.state.input.name') skill
+    FROM part p LEFT JOIN session s ON s.id=p.session_id
+    WHERE json_valid(p.data)
+      AND json_extract(p.data, '$.type') = 'tool'
+      AND json_extract(p.data, '$.tool') = 'skill'
+      AND json_extract(p.data, '$.state.status') = 'completed'
+      AND p.time_created >= ?
+  `).all(Number(sinceMs) || 0);
+  return parseOpenCodeSkillEvents(rows);
+}
+
+function readOpenCodeSkillsFromDatabase(source, sinceMs = 0) {
+  return parseOpenCodeSkills(readOpenCodeSkillEventsFromDatabase(source, sinceMs));
+}
+
+export function importOpenCodeSkillEvents(db, events, importedAt = new Date().toISOString()) {
+  const insert = db.prepare('INSERT OR IGNORE INTO opencode_skill_events (id, day, skill, agent, time_created, imported_at) VALUES (?, ?, ?, ?, ?, ?)');
+  let imported = 0;
+  for (const event of events || []) {
+    const result = insert.run(event.id, event.day, event.skill, event.agent || null, event.time_created, importedAt);
+    imported += Number(result.changes) || 0;
+  }
+  return imported;
+}
+
+export function readOpenCodeSkillEvents(file = defaultOpenCodeDatabase(), sinceMs = 0) {
+  if (!fs.existsSync(file)) return [];
+  let source;
+  try {
+    source = new DatabaseSync(file, { readOnly: true });
+    return readOpenCodeSkillEventsFromDatabase(source, sinceMs);
+  } catch { return []; }
+  finally { source?.close(); }
+}
+
+export function readOpenCodeSkills(file = defaultOpenCodeDatabase(), sinceMs = 0) {
+  return parseOpenCodeSkills(readOpenCodeSkillEvents(file, sinceMs));
+}
 
 // Limites Codex temps réel (fenêtre 5h + hebdo) via backend ChatGPT.
 // Contrat : normalizeLimits(payload) pur et testable ; collectCodexLimits() fait IO + cache.
@@ -400,6 +475,11 @@ export function recordLimitsHistory(db, limits, now = Date.now()) {
   return 1;
 }
 
+function openCodeSkillSince(db) {
+  const count = db.prepare('SELECT COUNT(*) count FROM opencode_skill_events').get().count;
+  return Number(count) ? Date.now() - 48 * 60 * 60 * 1000 : 0;
+}
+
 function collectOpenCodeIsolated(db, file) {
   return importIsolatedProjection(db, runIsolatedCollector('opencode', file), 'opencode');
 }
@@ -408,7 +488,24 @@ async function collectOpenCodeIsolatedAsync(db, file) {
   return importIsolatedProjection(db, await runIsolatedCollectorAsync('opencode', file), 'opencode');
 }
 
-export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated = false } = {}) {
+export async function collectOpenCodeSkillsAsync(db, { file = defaultOpenCodeDatabase() } = {}) {
+  if (!fs.existsSync(file)) return { imported: 0, source: file, platform: 'opencode', status: 'not_connected' };
+  const signature = openCodeSignature(file), cached = openCodeSkillCaches.get(db);
+  if (cached?.file === file && Date.now() - cached.collectedAt < OPEN_CODE_REFRESH_INTERVAL_MS) return { ...cached.result, imported: 0, skipped: true, stale: true };
+  if (cached?.file === file && cached.signature === signature) return { ...cached.result, imported: 0, skipped: true };
+  try {
+    const sinceMs = openCodeSkillSince(db);
+    const payload = await runIsolatedCollectorAsync('opencode-skills', file, 120000, [String(sinceMs)]);
+    const imported = importOpenCodeSkillEvents(db, payload.skillEvents);
+    const result = { imported, source: file, platform: 'opencode', status: 'connected' };
+    openCodeSkillCaches.set(db, { file, signature, result, collectedAt: Date.now() });
+    return result;
+  } catch (error) {
+    return { imported: 0, source: file, platform: 'opencode', status: 'not_connected', error: error.message };
+  }
+}
+
+export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated = false, skillSinceMs = 0, collectSkills = true } = {}) {
   if (!fs.existsSync(file)) return { imported: 0, source: file, platform: 'opencode', status: 'not_connected' };
   const signature = openCodeSignature(file);
   const cached = openCodeCaches.get(db);
@@ -432,6 +529,8 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated
         s.tokens_input, s.tokens_output, s.tokens_reasoning, s.tokens_cache_read, p.name project_name
       FROM session s LEFT JOIN project p ON p.id=s.project_id
     `).all();
+    const skillEvents = collectSkills ? readOpenCodeSkillEventsFromDatabase(source, skillSinceMs) : [];
+    const skills = parseOpenCodeSkills(skillEvents);
     const hasMessage = source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='message'").get();
     const messagesBySession = new Map();
     if (hasMessage) {
@@ -516,8 +615,9 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated
       // Rebuild the projection so deleted source sessions cannot remain in the dashboard.
       db.prepare("DELETE FROM sessions WHERE platform='opencode'").run();
       const imported = importSessions(db, sessions);
+      const skillEventsImported = importOpenCodeSkillEvents(db, skillEvents);
       db.exec('COMMIT');
-      const result = { imported, sourceSessions: rows.filter((row) => !row.parent_id).length, source: file, platform: 'opencode', status: 'connected' };
+      const result = { imported, skillEventsImported, sourceSessions: rows.filter((row) => !row.parent_id).length, source: file, platform: 'opencode', status: 'connected', skills };
       openCodeCaches.set(db, { file, signature, result, collectedAt: Date.now() });
       return result;
     } catch (error) {

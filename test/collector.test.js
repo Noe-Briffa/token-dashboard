@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { collectCodex, collectCodexAsync, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase, parseCodexSession, recordLimitsHistory } from '../src/collector.js';
+import { collectCodex, collectCodexAsync, collectCodexLimits, collectOpenCode, collectOpenCodeSkillsAsync, importOpenCodeSkillEvents, importSessions, normalizeLimits, normalizeSession, openDatabase, parseCodexSession, parseOpenCodeSkills, recordLimitsHistory } from '../src/collector.js';
 import { mergeLegacyData } from '../src/storage.js';
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'usage-monitor-'));
@@ -105,13 +105,53 @@ test('stored price changes computed cost without changing session data', () => {
 test('imports OpenCode model IDs, reported cost and cache reads', () => {
   const directory = temp(), sourceFile = path.join(directory, 'opencode.db'), target = openDatabase(path.join(directory, 'usage.sqlite'));
   const source = new DatabaseSync(sourceFile);
-  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); INSERT INTO project VALUES ('p1','Demo'); INSERT INTO session VALUES ('s1','p1',NULL,'C:/demo','build','{"id":"provider/model","providerID":"openai","variant":"fast"}',0.42,1000,61000,100,25,15,75);`); source.close();
+  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT); INSERT INTO project VALUES ('p1','Demo'); INSERT INTO session VALUES ('s1','p1',NULL,'C:/demo','build','{"id":"provider/model","providerID":"openai","variant":"fast"}',0.42,1000,61000,100,25,15,75);`);
+  source.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run('part-1', 'message-1', 's1', Date.parse('2026-09-21T08:00:00Z'), Date.parse('2026-09-21T08:00:01Z'), JSON.stringify({ type: 'tool', tool: 'skill', state: { status: 'completed', input: { name: 'ponytail' } } }));
+  source.close();
   const result = collectOpenCode(target, { file: sourceFile });
-  assert.equal(result.status, 'connected'); assert.equal(result.imported, 1);
+  assert.equal(result.status, 'connected'); assert.equal(result.imported, 1); assert.equal(result.skillEventsImported, 1); assert.deepEqual(result.skills, [{ day: '2026-09-21', skill: 'ponytail', agent: 'build', activations: 1 }]);
+  assert.equal(target.prepare('SELECT COUNT(*) count FROM opencode_skill_events').get().count, 1);
   assert.equal(collectOpenCode(target, { file: sourceFile }).skipped, true);
+  assert.equal(target.prepare('SELECT COUNT(*) count FROM opencode_skill_events').get().count, 1);
   const row = target.prepare('SELECT platform, provider, model, project, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, reported_cost_usd FROM sessions WHERE id=?').get('opencode:s1');
   assert.equal(row.platform, 'opencode'); assert.equal(row.provider, 'openai'); assert.equal(row.model, 'provider/model'); assert.equal(row.project, 'Demo'); assert.equal(row.input_tokens, 100); assert.equal(row.cached_input_tokens, 75); assert.equal(row.total_tokens, 215); assert.equal(row.reported_cost_usd, 0.42);
   target.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('imports OpenCode skill events idempotently into the local cache', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const event = { id: 'part-1', day: '2026-09-20', skill: 'ponytail', agent: 'build', time_created: Date.parse('2026-09-20T12:00:00Z') };
+  assert.equal(importOpenCodeSkillEvents(db, [event]), 1);
+  assert.equal(importOpenCodeSkillEvents(db, [event]), 0);
+  assert.deepEqual({ ...db.prepare('SELECT day, skill, agent, COUNT(*) count FROM opencode_skill_events GROUP BY day, skill, agent').get() }, { day: '2026-09-20', skill: 'ponytail', agent: 'build', count: 1 });
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('collects OpenCode skills independently from the session projection', async () => {
+  const directory = temp(), sourceFile = path.join(directory, 'opencode.db'), target = openDatabase(path.join(directory, 'usage.sqlite'));
+  const source = new DatabaseSync(sourceFile);
+  source.exec(`CREATE TABLE session (id TEXT PRIMARY KEY, agent TEXT); CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT); INSERT INTO session VALUES ('s1','build');`);
+  source.prepare('INSERT INTO part VALUES (?, ?, ?, ?)').run('part-1', 's1', Date.parse('2026-09-21T08:00:00Z'), JSON.stringify({ type: 'tool', tool: 'skill', state: { status: 'completed', input: { name: 'ponytail' } } }));
+  source.close();
+  const result = await collectOpenCodeSkillsAsync(target, { file: sourceFile });
+  assert.equal(result.status, 'connected'); assert.equal(result.imported, 1);
+  assert.equal((await collectOpenCodeSkillsAsync(target, { file: sourceFile })).skipped, true);
+  assert.equal(target.prepare('SELECT COUNT(*) count FROM opencode_skill_events').get().count, 1);
+  target.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('counts completed OpenCode skill activations by Paris day', () => {
+  assert.deepEqual(parseOpenCodeSkills([
+    { skill: 'ponytail', agent: 'build', time_created: Date.parse('2026-09-20T21:30:00Z') },
+    { skill: 'ponytail', agent: 'build', time_created: Date.parse('2026-09-21T08:00:00Z') },
+    { skill: 'impeccable', agent: 'explore', time_created: Date.parse('2026-09-21T08:01:00Z') },
+    { skill: '', agent: 'build', time_created: Date.parse('2026-09-21T08:02:00Z') },
+    { skill: 'ignored', agent: 'build', time_created: 'invalid' },
+  ]), [
+    { day: '2026-09-20', skill: 'ponytail', agent: 'build', activations: 1 },
+    { day: '2026-09-21', skill: 'impeccable', agent: 'explore', activations: 1 },
+    { day: '2026-09-21', skill: 'ponytail', agent: 'build', activations: 1 },
+  ]);
 });
 
 test('worker preserves the shared session contract after JSON round-trip', () => {

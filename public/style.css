@@ -258,9 +258,45 @@ button.head-toggle:hover { color: var(--ink); background: none; border: none; te
 .activity-panel { overflow: hidden; }
 .activity-head { align-items: flex-start; }
 .activity-head h2 { margin-bottom: 3px; }
-.activity-controls { display: flex; align-items: center; gap: 5px; }
-.activity-controls button { min-width: 34px; padding: 6px 9px; }
-.activity-controls button:disabled { cursor: default; opacity: .45; }
+.activity-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.activity-controls button {
+  min-width: 34px;
+  min-height: 32px;
+  padding: 5px 9px;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  transition: color 180ms ease-out, background 180ms ease-out, border-color 180ms ease-out, transform 180ms ease-out;
+}
+.activity-controls button:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+.activity-controls button:active:not(:disabled) { transform: translateY(0); }
+.activity-controls button:disabled {
+  cursor: default;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in oklch, var(--accent) 28%, var(--line));
+  opacity: 1;
+}
+.activity-controls button:first-child,
+.activity-controls button:last-child { width: 34px; padding-inline: 5px; font-size: 16px; font-weight: 500; }
+.activity-controls button:last-child:disabled { color: var(--ink-muted); background: transparent; border-color: transparent; opacity: .42; }
 .activity-summary { margin: -8px 0 10px; }
 .activity-heatmap-wrap { overflow-x: auto; padding-bottom: 4px; }
 .activity-grid { display: grid; grid-template-columns: 64px repeat(24, minmax(18px, 1fr)) minmax(48px, 1.5fr); gap: 4px; min-width: 820px; }
@@ -302,6 +338,7 @@ button.head-toggle:hover { color: var(--ink); background: none; border: none; te
 .agent-table .agent-total { color: var(--ink); font-weight: 800; }
 .agent-zero { color: var(--line-strong); }
 .agent-empty { padding: 8px 0 2px; }
+.skill-table th:first-child, .skill-table td:first-child { min-width: 210px; }
 .bar > span { position: absolute; right: 0; bottom: -20px; left: 0; display: block; height: 20px; overflow: hidden; padding-top: 6px; color: var(--ink-muted); font-size: 9px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .bar > span.hidden { visibility: hidden; }
 .bar.empty { pointer-events: none; }
