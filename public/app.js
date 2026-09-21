@@ -239,33 +239,52 @@ function renderAgentDaily(days = [], range = null) {
   const rows = agents.map((agent) => `<tr><th scope="row">${escape(agentLabel(agent))}</th>${days.map((day) => { const count = counts.get(`${day.day}\u0000${agent}`) || 0; return `<td>${count ? number.format(count) : '<span class="agent-zero">—</span>'}</td>`; }).join('')}<td class="agent-total">${number.format(totals.get(agent))}</td></tr>`).join('');
   el.innerHTML = `<div class="agent-table-wrap"><table class="agent-table"><thead><tr><th scope="col">Agent</th>${header}<th scope="col">Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
-function renderSkillDaily(days = [], range = null, status = 'loading') {
+function renderSkillDaily(days = [], range = null, source = { status: 'loading' }) {
   const el = $('#skill-daily');
   if (!el) return;
+  if (typeof source === 'string') source = { status: source };
   if ($('#skills-range') && range) $('#skills-range').textContent = `${range.start} — ${range.end}`;
-  if (status === 'loading') {
+  const relative = (value) => {
+    if (!value) return null;
+    const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+    if (seconds < 60) return 'à l’instant';
+    if (seconds < 3600) return `il y a ${Math.floor(seconds / 60)} min`;
+    if (seconds < 86400) return `il y a ${Math.floor(seconds / 3600)} h`;
+    return `il y a ${Math.floor(seconds / 86400)} j`;
+  };
+  const cacheLabel = source.cacheAvailable ? `Cache local · ${number.format(source.eventCount || 0)} événements` : 'Aucun cache local';
+  const freshness = relative(source.lastImportedAt);
+  if ($('#skills-source-meta')) {
+    const state = source.status === 'loading' ? 'Actualisation en cours' : source.status === 'stale' ? 'Actualisation à vérifier' : source.status === 'error' ? 'Dernière actualisation échouée' : source.status === 'connected' ? 'Source OpenCode connectée' : 'Source OpenCode indisponible';
+    $('#skills-source-meta').textContent = `${state} · ${cacheLabel}${freshness ? ` · ${freshness}` : ''}`;
+  }
+  if (source.status === 'loading' && !source.cacheAvailable) {
     if ($('#skills-summary')) $('#skills-summary').textContent = 'Actualisation OpenCode en cours';
-    el.innerHTML = '<p class="muted agent-empty">Collecte des skills OpenCode en cours…</p>';
+    el.innerHTML = '<p class="muted agent-empty">Collecte des appels skills OpenCode en cours…</p>';
     return;
   }
-  if (status !== 'connected') {
+  if (!['connected', 'loading', 'stale'].includes(source.status)) {
     if ($('#skills-summary')) $('#skills-summary').textContent = 'Source OpenCode indisponible';
-    el.innerHTML = '<p class="muted agent-empty">Skills OpenCode indisponibles pour le moment.</p>';
+    el.innerHTML = '<p class="muted agent-empty">Source OpenCode indisponible pour le moment.</p>';
     return;
   }
-  const totals = new Map(), counts = new Map();
+  const totals = new Map(), counts = new Map(), byAgent = new Map();
   for (const day of days) for (const row of day.skills || []) {
     totals.set(row.skill, (totals.get(row.skill) || 0) + Number(row.activations || 0));
-    counts.set(`${day.day}\u0000${row.skill}`, Number(row.activations || 0));
+    const key = `${day.day}\u0000${row.skill}`;
+    counts.set(key, (counts.get(key) || 0) + Number(row.activations || 0));
+    const agents = byAgent.get(row.skill) || new Map();
+    agents.set(row.agent, (agents.get(row.agent) || 0) + Number(row.activations || 0));
+    byAgent.set(row.skill, agents);
   }
   const skills = [...totals.keys()].sort((a, b) => totals.get(b) - totals.get(a) || a.localeCompare(b));
   const totalActivations = [...totals.values()].reduce((sum, value) => sum + value, 0);
-  if ($('#skills-summary')) $('#skills-summary').textContent = `${number.format(totalActivations)} activation${totalActivations === 1 ? '' : 's'} · ${number.format(skills.length)} skill${skills.length === 1 ? '' : 's'}`;
-  if (!skills.length) { el.innerHTML = '<p class="muted agent-empty">Aucune activation explicite sur la période.</p>'; return; }
+  if ($('#skills-summary')) $('#skills-summary').textContent = `${number.format(totalActivations)} appel${totalActivations === 1 ? '' : 's'} explicite${totalActivations === 1 ? '' : 's'} · ${number.format(skills.length)} skill${skills.length === 1 ? '' : 's'}`;
+  if (!skills.length) { el.innerHTML = '<p class="muted agent-empty">Aucun appel explicite au tool skill sur cette période.</p>'; return; }
   const dayLabel = (day) => new Date(`${day}T00:00:00Z`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' }).replace('.', '');
   const header = days.map((day) => `<th scope="col">${escape(dayLabel(day.day))}</th>`).join('');
-  const rows = skills.map((skill) => `<tr><th scope="row">${escape(skill)}</th>${days.map((day) => { const count = counts.get(`${day.day}\u0000${skill}`) || 0; return `<td>${count ? number.format(count) : '<span class="agent-zero">—</span>'}</td>`; }).join('')}<td class="agent-total">${number.format(totals.get(skill))}</td></tr>`).join('');
-  el.innerHTML = `<div class="agent-table-wrap"><table class="agent-table skill-table"><thead><tr><th scope="col">Skill</th>${header}<th scope="col">Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const rows = skills.map((skill) => { const agents = [...(byAgent.get(skill)?.entries() || [])].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); const breakdown = agents.map(([agent, count]) => `<span class="skill-agent"><b>${escape(agent)}</b> ${number.format(count)}</span>`).join(''); return `<tr><th scope="row"><span class="skill-name">${escape(skill)}</span><span class="skill-agents">${breakdown}</span></th>${days.map((day) => { const count = counts.get(`${day.day}\u0000${skill}`) || 0; return `<td>${count ? number.format(count) : '<span class="agent-zero">—</span>'}</td>`; }).join('')}<td class="agent-total">${number.format(totals.get(skill))}</td></tr>`; }).join('');
+  el.innerHTML = `<div class="agent-table-wrap"><table class="agent-table skill-table"><thead><tr><th scope="col">Skill · agent</th>${header}<th scope="col">Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 const activityDayNames = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 function heatRoundUnit(value) { return 10 ** Math.max(0, Math.floor(Math.log10(Math.max(value, 1))) - 1); }
@@ -484,7 +503,7 @@ function render(data) {
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAgentDaily(data.agentDaily, data.range); renderSkillDaily(data.skillDaily, data.range, data.skillStatus); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAgentDaily(data.agentDaily, data.range); renderSkillDaily(data.skillDaily, data.range, data.skillSource || data.skillStatus); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 let loadVersion = 0;
 let refreshPromise = null;

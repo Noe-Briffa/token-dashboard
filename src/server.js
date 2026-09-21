@@ -17,7 +17,7 @@ const estimatedCost = `(s.input_tokens * COALESCE(p.input_usd_per_million,0) + s
 const cost = `COALESCE(s.reported_cost_usd, CASE WHEN p.model IS NOT NULL THEN ${estimatedCost} ELSE ${estimatedCost} END)`;
 const ACTIVITY_VERSION = 3;
 let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not_connected' } };
-let skillSourceState = { status: 'loading' };
+let skillSourceState = { status: 'loading', lastAttemptAt: null, lastSuccessAt: null, lastImported: 0, error: null };
 let adtentionCache = { at: 0, value: null };
 let initialRefreshTimer = null;
 let refreshPromise = null;
@@ -47,12 +47,12 @@ function refresh() {
 }
 function refreshSkills() {
   if (skillRefreshPromise) return skillRefreshPromise;
-  skillSourceState = { status: 'loading' };
+  skillSourceState = { ...skillSourceState, status: 'loading', lastAttemptAt: new Date().toISOString(), error: null };
   skillRefreshPromise = collectOpenCodeSkillsAsync(db).then((result) => {
-    skillSourceState = result;
+    skillSourceState = { ...result, status: result.stale ? 'stale' : result.status, lastAttemptAt: skillSourceState.lastAttemptAt, lastSuccessAt: result.status === 'connected' ? new Date().toISOString() : skillSourceState.lastSuccessAt, lastImported: result.imported || 0 };
     return result;
   }).catch((error) => {
-    skillSourceState = { status: 'not_connected', error: error.message };
+    skillSourceState = { ...skillSourceState, status: 'error', error: error.message };
     return skillSourceState;
   }).finally(() => { skillRefreshPromise = null; });
   return skillRefreshPromise;
@@ -143,10 +143,20 @@ function dailyAgents(base, params, days) {
 function dailySkills(days, query) {
   if (query.get('platform') && query.get('platform') !== 'opencode') return days.map((day) => ({ day, skills: [] }));
   const agent = query.get('agent');
-  const rows = db.prepare(`SELECT day, skill, COUNT(*) activations FROM opencode_skill_events WHERE day BETWEEN ? AND ?${agent ? ' AND agent=?' : ''} GROUP BY day, skill ORDER BY day DESC, activations DESC, skill`).all(...[days[0], days.at(-1), ...(agent ? [agent] : [])]);
+  const rows = db.prepare(`SELECT day, skill, agent, COUNT(*) activations FROM opencode_skill_events WHERE day BETWEEN ? AND ?${agent ? ' AND agent=?' : ''} GROUP BY day, skill, agent ORDER BY day DESC, activations DESC, skill, agent`).all(...[days[0], days.at(-1), ...(agent ? [agent] : [])]);
   const grouped = new Map(days.map((day) => [day, []]));
-  for (const row of rows) grouped.get(row.day)?.push({ skill: row.skill, activations: Number(row.activations) || 0 });
+  for (const row of rows) grouped.get(row.day)?.push({ skill: row.skill, agent: row.agent || 'OpenCode', activations: Number(row.activations) || 0 });
   return days.map((day) => ({ day, skills: grouped.get(day) }));
+}
+function skillSource() {
+  const cache = db.prepare('SELECT COUNT(*) eventCount, MAX(imported_at) lastImportedAt, MAX(time_created) lastEventAt FROM opencode_skill_events').get();
+  return {
+    ...skillSourceState,
+    cacheAvailable: Number(cache.eventCount) > 0,
+    eventCount: Number(cache.eventCount) || 0,
+    lastImportedAt: cache.lastImportedAt || null,
+    lastEventAt: Number(cache.lastEventAt) || null,
+  };
 }
 const activityClock = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Paris', weekday: 'short', hour: '2-digit', hourCycle: 'h23' });
 const activityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -188,9 +198,9 @@ function data(query) {
   const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
   const sourceRows = db.prepare('SELECT platform, COUNT(*) sessions FROM sessions GROUP BY platform').all();
   const sources = [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceState.codex.sourceSessions ?? (sourceRows.find((row) => row.platform === 'codex')?.sessions || 0) }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceState.opencode.sourceSessions ?? (sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0) }];
-  const cachedSkills = db.prepare('SELECT COUNT(*) count FROM opencode_skill_events').get().count;
-  const skillStatus = Number(cachedSkills) > 0 ? 'connected' : skillSourceState.status;
-  return { activityVersion: ACTIVITY_VERSION, summary, daily, agentDaily, skillDaily, skillStatus, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
+  const skillSourceStateView = skillSource();
+  const skillStatus = skillSourceStateView.status;
+  return { activityVersion: ACTIVITY_VERSION, summary, daily, agentDaily, skillDaily, skillStatus, skillSource: skillSourceStateView, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
 }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');

@@ -135,6 +135,7 @@ test('collects OpenCode skills independently from the session projection', async
   source.close();
   const result = await collectOpenCodeSkillsAsync(target, { file: sourceFile });
   assert.equal(result.status, 'connected'); assert.equal(result.imported, 1);
+  assert.equal(result.scannedSince, null);
   assert.equal((await collectOpenCodeSkillsAsync(target, { file: sourceFile })).skipped, true);
   assert.equal(target.prepare('SELECT COUNT(*) count FROM opencode_skill_events').get().count, 1);
   target.close(); fs.rmSync(directory, { recursive: true, force: true });

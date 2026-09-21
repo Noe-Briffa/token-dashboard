@@ -497,7 +497,7 @@ export async function collectOpenCodeSkillsAsync(db, { file = defaultOpenCodeDat
     const sinceMs = openCodeSkillSince(db);
     const payload = await runIsolatedCollectorAsync('opencode-skills', file, 120000, [String(sinceMs)]);
     const imported = importOpenCodeSkillEvents(db, payload.skillEvents);
-    const result = { imported, source: file, platform: 'opencode', status: 'connected' };
+    const result = { imported, source: file, platform: 'opencode', status: 'connected', scannedSince: sinceMs || null };
     openCodeSkillCaches.set(db, { file, signature, result, collectedAt: Date.now() });
     return result;
   } catch (error) {

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { importSessions, openDatabase } from '../src/collector.js';
+import { importOpenCodeSkillEvents, importSessions, openDatabase } from '../src/collector.js';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -17,6 +17,10 @@ test('serves the dashboard before the initial collection finishes', async () => 
     { platform: 'opencode', agent: 'explore', id: 'opencode:session-1:gpt-test:2026-09-18:11', sourcePath: 'segment-2', startedAt: '2026-09-18T12:30:00.000Z', total: 10 },
     { platform: 'opencode', agent: 'build', id: 'opencode:session-2', sourcePath: 'session-2', startedAt: '2026-09-19T12:00:00.000Z', total: 10 },
     { platform: 'opencode', agent: 'general', id: 'opencode:session-3', sourcePath: 'session-3', startedAt: '2026-09-18T13:00:00.000Z', total: 10 },
+  ]);
+  importOpenCodeSkillEvents(database, [
+    { id: 'skill-1', day: '2026-09-18', skill: 'caveman', agent: 'plan', time_created: Date.parse('2026-09-18T14:00:00.000Z') },
+    { id: 'skill-2', day: '2026-09-18', skill: 'caveman', agent: 'build', time_created: Date.parse('2026-09-18T14:01:00.000Z') },
   ]);
   database.close();
   const child = spawn(process.execPath, ['src/server.js'], {
@@ -40,6 +44,9 @@ test('serves the dashboard before the initial collection finishes', async () => 
     assert.equal(response.status, 200);
     const data = await (await fetch(url + '/api/data?from=2026-09-01&to=2026-09-02&activityFrom=2026-09-14&activityTo=2026-09-20', { signal: AbortSignal.timeout(1000) })).json();
     assert.equal(data.activityVersion, 3);
+    assert.equal(typeof data.skillSource.eventCount, 'number');
+    assert.equal(typeof data.skillSource.cacheAvailable, 'boolean');
+    assert.equal(typeof data.skillSource.status, 'string');
     assert.deepEqual(data.activityRange, { start: '2026-09-14', end: '2026-09-20' });
     assert.equal(data.activity.length, 168);
     assert.equal(data.activity.every((cell) => Number.isInteger(cell.dayIndex) && cell.dayIndex >= 0 && cell.dayIndex < 7 && cell.hour >= 0 && cell.hour < 24), true);
@@ -47,6 +54,10 @@ test('serves the dashboard before the initial collection finishes', async () => 
     assert.deepEqual(agents.agentDaily, [
       { day: '2026-09-18', agents: [{ agent: 'explore', sessions: 1 }] },
       { day: '2026-09-19', agents: [] },
+    ]);
+    assert.deepEqual(agents.skillDaily, [
+      { day: '2026-09-18', skills: [{ skill: 'caveman', agent: 'build', activations: 1 }, { skill: 'caveman', agent: 'plan', activations: 1 }] },
+      { day: '2026-09-19', skills: [] },
     ]);
   } finally {
     child.kill();
