@@ -123,8 +123,11 @@ const dateOnly = (date) => date.toISOString().slice(0, 10);
 const addDays = (value, days) => { const date = new Date(`${value}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return dateOnly(date); };
 const mondayOf = (date) => { const value = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())); value.setUTCDate(value.getUTCDate() - (value.getUTCDay() + 6) % 7); return dateOnly(value); };
 const currentActivityWeek = () => { const now = new Date(); const start = mondayOf(now); return { start, end: addDays(start, 6) }; };
-let activityWeekStart = currentActivityWeek().start;
-let activityFollowsCurrent = true;
+const activityPreferenceKey = 'usage-monitor-activity-week';
+const readActivityWeek = () => { try { const value = sessionStorage.getItem(activityPreferenceKey); return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : null; } catch { return null; } };
+let activityWeekStart = readActivityWeek() || currentActivityWeek().start;
+let activityFollowsCurrent = !readActivityWeek();
+function saveActivityWeek() { try { activityFollowsCurrent ? sessionStorage.removeItem(activityPreferenceKey) : sessionStorage.setItem(activityPreferenceKey, activityWeekStart); } catch {} }
 function selectedActivityRange() { return { start: activityWeekStart, end: addDays(activityWeekStart, 6) }; }
 function formatActivityDate(value) { return new Date(`${value}T00:00:00Z`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); }
 function renderActivityControls(range) {
@@ -505,6 +508,22 @@ async function load(refresh = false) {
     return { ok: false, error };
   }
 }
+async function loadActivityWeek() {
+  const version = ++loadVersion;
+  if (activityFollowsCurrent) activityWeekStart = currentActivityWeek().start;
+  try {
+    const dataResponse = await fetch(`/api/data?${filterQuery()}`);
+    if (!dataResponse.ok) throw new Error('Données indisponibles');
+    const data = await dataResponse.json();
+    if (version !== loadVersion) return { ok: true, superseded: true };
+    if (scrolling) pendingData = { data, version };
+    else paint(data, version);
+    return { ok: true };
+  } catch (error) {
+    if (version === loadVersion) $('#status').textContent = 'Connexion impossible · nouvelle tentative automatique';
+    return { ok: false, error };
+  }
+}
 $('#refresh').onclick = () => {
   if (manualRefreshPromise) return;
   const button = $('#refresh'), feedback = $('#refresh-feedback');
@@ -527,9 +546,9 @@ $('#refresh').onclick = () => {
     setTimeout(() => { button.disabled = false; button.textContent = 'Actualiser'; button.classList.remove('is-refreshing'); feedback.classList.remove('visible'); }, 1800);
   });
 };
-$('#activity-prev').onclick = () => { activityWeekStart = addDays(activityWeekStart, -7); activityFollowsCurrent = false; load(); };
-$('#activity-next').onclick = () => { const current = currentActivityWeek(); const next = addDays(activityWeekStart, 7); if (next <= current.start) { activityWeekStart = next; activityFollowsCurrent = next === current.start; load(); } };
-$('#activity-current').onclick = () => { activityWeekStart = currentActivityWeek().start; activityFollowsCurrent = true; load(); };
+$('#activity-prev').onclick = () => { activityWeekStart = addDays(activityWeekStart, -7); activityFollowsCurrent = false; saveActivityWeek(); loadActivityWeek(); };
+$('#activity-next').onclick = () => { const current = currentActivityWeek(); const next = addDays(activityWeekStart, 7); if (next <= current.start) { activityWeekStart = next; activityFollowsCurrent = next === current.start; saveActivityWeek(); loadActivityWeek(); } };
+$('#activity-current').onclick = () => { activityWeekStart = currentActivityWeek().start; activityFollowsCurrent = true; saveActivityWeek(); loadActivityWeek(); };
 window.addEventListener('scroll', () => {
   scrolling = true;
   clearTimeout(scrollTimer);
@@ -542,6 +561,7 @@ window.addEventListener('scroll', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   loadLimits();
+  loadActivityWeek();
   clearTimeout(visibilityTimer);
   visibilityTimer = setTimeout(requestRefresh, 300);
 });

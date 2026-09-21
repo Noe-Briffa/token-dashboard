@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { collectCodex, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase, parseCodexSession, recordLimitsHistory } from '../src/collector.js';
+import { collectCodex, collectCodexAsync, collectCodexLimits, collectOpenCode, importSessions, normalizeLimits, normalizeSession, openDatabase, parseCodexSession, recordLimitsHistory } from '../src/collector.js';
 import { mergeLegacyData } from '../src/storage.js';
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'usage-monitor-'));
@@ -65,6 +65,23 @@ test('imports Codex usage with platform and normalizes future collector contract
   importSessions(db, [future]);
   const opencode = db.prepare('SELECT platform, agent, total_tokens FROM sessions WHERE id=?').get('open-1');
   assert.equal(opencode.platform, 'opencode'); assert.equal(opencode.agent, 'OpenCode'); assert.equal(opencode.total_tokens, 5);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('collects Codex asynchronously without running the parser in the server process', async () => {
+  const directory = temp(), root = path.join(directory, 'sessions'), sessions = path.join(root, '2026', '08', '31'); fs.mkdirSync(sessions, { recursive: true });
+  const file = path.join(sessions, 'rollout-async.jsonl');
+  const rows = [
+    { timestamp: '2026-08-31T10:00:00Z', type: 'session_meta', payload: { session_id: 'async-1', timestamp: '2026-08-31T10:00:00Z', cwd: 'C:/work', originator: 'Codex Desktop' } },
+    { timestamp: '2026-08-31T10:01:00Z', type: 'turn_context', payload: { model: 'gpt-async' } },
+    { timestamp: '2026-08-31T10:01:30Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 } } } },
+    { timestamp: '2026-08-31T10:02:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, reasoning_output_tokens: 5, total_tokens: 115 } } } },
+  ]; fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const result = await collectCodexAsync(db, { root });
+  assert.equal(result.status, undefined);
+  assert.equal(result.imported, 1);
+  assert.equal(db.prepare('SELECT model, total_tokens FROM sessions WHERE id=?').get('async-1').total_tokens, 115);
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 

@@ -321,9 +321,13 @@ export async function collectCodexAsync(db, { root = defaultCodexRoot() } = {}) 
   const signature = sourceSignature(files), cache = codexCaches.get(db) || { root, signature: null, files: new Map() };
   if (cache.root === root && cache.signature === signature) return { ...cache.result, imported: 0, skipped: true };
   cache.root = root;
+  if (!files.length) return { imported: 0, source: root, platform: 'codex', sourceSessions: 0 };
   try {
-    // Reuse the in-process file cache: the isolated worker rebuilt all Codex history on every refresh.
-    return collectCodex(db, { root });
+    const result = importIsolatedProjection(db, await runIsolatedCollectorAsync('codex', root), 'codex');
+    cache.signature = signature;
+    cache.result = result;
+    codexCaches.set(db, cache);
+    return result;
   } catch (error) {
     return { imported: 0, source: root, platform: 'codex', status: 'not_connected', error: error.message };
   }
