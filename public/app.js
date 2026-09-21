@@ -350,9 +350,10 @@ function renderActivityHeatmap(cells = [], activityVersion = 0, activityRange = 
     sessions: total.sessions + (Number(cell.sessions) || 0),
   }), { day, dayIndex, total: 0, sessions: 0 }));
   const periodTotal = dayTotals.reduce((total, day) => ({ total: total.total + day.total, sessions: total.sessions + day.sessions }), { total: 0, sessions: 0 });
-  const totalThresholds = heatThresholds([...dayTotals, ...hourTotals]);
+  const dayTotalThresholds = heatThresholds(dayTotals);
+  const hourTotalThresholds = heatThresholds(hourTotals);
   const heatLegend = (label, scale) => `<strong class="activity-legend-section">${label}</strong><i class="heat-empty"></i><span>0</span>${scale.map((threshold, index) => `<i class="heat-level-${index + 1}"></i><span>≤ ${formatHeatValue(threshold)}</span>`).join('')}<i class="heat-level-5"></i><span>> ${formatHeatValue(scale[scale.length - 1])}</span>`;
-  if (legend) legend.innerHTML = `${heatLegend('Cellules', thresholds)}${heatLegend('Totaux', totalThresholds)}<span class="activity-total-note">Échelles dynamiques de la semaine</span>`;
+  if (legend) legend.innerHTML = heatLegend('Cellules', thresholds);
   if (summary) summary.textContent = `Pic jour : ${activityDayNames[peak.dayIndex]} ${String(peak.hour).padStart(2, '0')} h · ${compact.format(max)} tokens · Pic horaire : ${String(hourPeak.hour).padStart(2, '0')} h · ${compact.format(hourPeak.total)} tokens`;
   const hourLabels = Array.from({ length: 24 }, (_, hour) => `<span class="activity-hour">${hour % 6 === 0 ? `${String(hour).padStart(2, '0')} h` : ''}</span>`).join('');
   const renderCell = (cell, label, scale, extraClass = '') => {
@@ -366,11 +367,11 @@ function renderActivityHeatmap(cells = [], activityVersion = 0, activityRange = 
       return renderCell(cell, label, thresholds);
     }).join('');
     const label = `${day} · total : ${compact.format(dayTotal.total)} tokens · ${number.format(dayTotal.sessions)} sessions`;
-    return `<span class="activity-day">${day}</span>${row}${renderCell(dayTotal, label, totalThresholds, ' activity-day-total-cell')}`;
+    return `<span class="activity-day">${day}</span>${row}${renderCell(dayTotal, label, dayTotalThresholds, ' activity-day-total-cell')}`;
   }).join('');
-  const totalRow = hourTotals.map((cell) => renderCell(cell, `${String(cell.hour).padStart(2, '0')} h · total : ${compact.format(cell.total)} tokens · ${number.format(cell.sessions)} sessions`, totalThresholds, ' activity-total-cell')).join('');
+  const totalRow = hourTotals.map((cell) => renderCell(cell, `${String(cell.hour).padStart(2, '0')} h · total : ${compact.format(cell.total)} tokens · ${number.format(cell.sessions)} sessions`, hourTotalThresholds, ' activity-total-cell')).join('');
   const periodLabel = `Total période : ${compact.format(periodTotal.total)} tokens · ${number.format(periodTotal.sessions)} sessions`;
-  el.innerHTML = `<div class="activity-grid"><span class="activity-corner"></span>${hourLabels}<span class="activity-total-hour">Total</span>${rows}<span class="activity-total-day">Total</span>${totalRow}${renderCell(periodTotal, periodLabel, totalThresholds, ' activity-total-cell')}</div>`;
+  el.innerHTML = `<div class="activity-grid"><span class="activity-corner"></span>${hourLabels}<span class="activity-total-hour">Total</span>${rows}<span class="activity-total-day">Total</span>${totalRow}${renderCell(periodTotal, periodLabel, hourTotalThresholds, ' activity-total-cell')}</div>`;
 }
 function renderAdtention(balance) {
   const el = $('#adtention-earnings');
