@@ -17,6 +17,22 @@ const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 const duration = (seconds) => seconds ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : '—';
 const metric = (label, value, note = '', title = '') => `<article class="metric"${title ? ` data-tip="${escape(title)}"` : ''}><label>${label}</label><strong>${value}</strong>${note ? `<small class="muted">${note}</small>` : ''}</article>`;
+const readOpenPreference = (key, fallback = false) => {
+  try {
+    const value = localStorage.getItem(key);
+    return value == null ? fallback : value === 'open';
+  } catch { return fallback; }
+};
+const saveOpenPreference = (key, open) => { try { localStorage.setItem(key, open ? 'open' : 'closed'); } catch { /* preference remains session-only */ } };
+function bindOpenPreference(selector, key, fallback = false) {
+  const element = $(selector);
+  if (!element) return;
+  element.open = readOpenPreference(key, fallback);
+  element.addEventListener('toggle', () => saveOpenPreference(key, element.open));
+}
+const agentsPanelPreferenceKey = 'usage-monitor-panel-agents';
+const skillsPanelPreferenceKey = 'usage-monitor-panel-skills';
+const systemAgentsPreferenceKey = 'usage-monitor-panel-system-agents';
 let barTips = [];
 function watchTips() {
   const tooltip = $('#tooltip');
@@ -242,20 +258,40 @@ function renderAgentDaily(days = [], range = null) {
   const el = $('#agent-daily');
   if (!el) return;
   if ($('#agents-range') && range) $('#agents-range').textContent = `${range.start} — ${range.end}`;
-  const totals = new Map(), counts = new Map();
+  const totals = new Map(), cells = new Map();
   for (const day of days) for (const row of day.agents || []) {
-    totals.set(row.agent, (totals.get(row.agent) || 0) + Number(row.sessions || 0));
-    counts.set(`${day.day}\u0000${row.agent}`, Number(row.sessions || 0));
+    const current = totals.get(row.agent) || { calls: 0, workedSeconds: 0, system: Boolean(row.system) };
+    current.calls += Number(row.calls || 0);
+    current.workedSeconds += Number(row.workedSeconds || 0);
+    current.system ||= Boolean(row.system);
+    totals.set(row.agent, current);
+    cells.set(`${day.day}\u0000${row.agent}`, row);
   }
-  const agents = [...totals.keys()].sort((a, b) => totals.get(b) - totals.get(a) || a.localeCompare(b));
-  const totalInvocations = [...totals.values()].reduce((sum, value) => sum + value, 0);
-  if ($('#agents-summary')) $('#agents-summary').textContent = `${number.format(totalInvocations)} invocation${totalInvocations === 1 ? '' : 's'} · ${number.format(agents.length)} agent${agents.length === 1 ? '' : 's'} actif${agents.length === 1 ? '' : 's'}`;
-  if (!agents.length) { el.innerHTML = '<p class="muted agent-empty">Aucune invocation OpenCode sur la période.</p>'; return; }
+  const totalWorkedSeconds = days.reduce((sum, day) => sum + Number(day.workedSeconds || 0), 0);
+  const totalInvocations = [...totals.values()].reduce((sum, value) => sum + value.calls, 0);
+  const allAgents = [...totals.keys()].sort((a, b) => totals.get(b).workedSeconds - totals.get(a).workedSeconds || totals.get(b).calls - totals.get(a).calls || a.localeCompare(b));
+  if ($('#agents-summary')) $('#agents-summary').textContent = `Temps actif estimé : ${duration(totalWorkedSeconds)} · ${number.format(totalInvocations)} appel${totalInvocations === 1 ? '' : 's'} · ${number.format(allAgents.length)} agent${allAgents.length === 1 ? '' : 's'}`;
+  if (!allAgents.length) { el.innerHTML = '<p class="muted agent-empty">Aucune activité OpenCode sur la période.</p>'; return; }
   const dayLabel = (day) => new Date(`${day}T00:00:00Z`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' }).replace('.', '');
   const agentLabel = (agent) => agent.startsWith('@') ? agent : `@${agent}`;
   const header = days.map((day) => `<th scope="col">${escape(dayLabel(day.day))}</th>`).join('');
-  const rows = agents.map((agent) => `<tr><th scope="row">${escape(agentLabel(agent))}</th>${days.map((day) => { const count = counts.get(`${day.day}\u0000${agent}`) || 0; return `<td>${count ? number.format(count) : '<span class="agent-zero">—</span>'}</td>`; }).join('')}<td class="agent-total">${number.format(totals.get(agent))}</td></tr>`).join('');
-  el.innerHTML = `<div class="agent-table-wrap"><table class="agent-table"><thead><tr><th scope="col">Agent</th>${header}<th scope="col">Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const table = (agents, hideHeader = false) => {
+    const rows = agents.map((agent) => {
+      const total = totals.get(agent);
+      const cell = (row) => row ? `<span class="agent-duration">${duration(Number(row.workedSeconds || 0))}</span><small class="agent-sessions">${number.format(Number(row.calls || 0))} appel${row.calls === 1 ? '' : 's'}</small>` : '<span class="agent-zero">—</span>';
+      return `<tr><th scope="row">${escape(agentLabel(agent))}</th>${days.map((day) => `<td>${cell(cells.get(`${day.day}\u0000${agent}`))}</td>`).join('')}<td class="agent-total">${cell(total)}</td></tr>`;
+    }).join('');
+    return `<div class="agent-table-wrap"><table class="agent-table${hideHeader ? ' agent-system-table' : ''}"><colgroup><col class="agent-name-column">${days.map(() => '<col>').join('')}<col></colgroup><thead${hideHeader ? ' class="agent-table-head-hidden"' : ''}><tr><th scope="col">Agent</th>${header}<th scope="col">Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  };
+  const specialized = allAgents.filter((agent) => !totals.get(agent).system);
+  const system = allAgents.filter((agent) => totals.get(agent).system);
+  const main = specialized.length ? table(specialized) : '<p class="muted agent-empty">Aucun agent spécialisé sur la période.</p>';
+  const systemBlock = system.length ? `<details class="agent-system-details"${readOpenPreference(systemAgentsPreferenceKey) ? ' open' : ''}><summary>Agents système · ${number.format(system.length)}</summary>${table(system, true)}</details>` : '';
+  const totalHeader = days.map((day) => `<th scope="col">${escape(dayLabel(day.day))}</th>`).join('');
+  const totalRow = `<div class="agent-table-wrap agent-period-total"><table class="agent-table agent-total-table" aria-label="Temps actif total par jour"><colgroup><col class="agent-name-column">${days.map(() => '<col>').join('')}<col></colgroup><thead><tr><th scope="col">Total temps actif</th>${totalHeader}<th scope="col">Période</th></tr></thead><tbody><tr><th scope="row">Tous les agents</th>${days.map((day) => `<td><span class="agent-duration">${duration(Number(day.workedSeconds || 0))}</span></td>`).join('')}<td class="agent-total"><span class="agent-duration">${duration(totalWorkedSeconds)}</span></td></tr></tbody></table></div>`;
+  el.innerHTML = `${main}${systemBlock}${totalRow}`;
+  const systemDetails = el.querySelector('.agent-system-details');
+  if (systemDetails) systemDetails.addEventListener('toggle', () => saveOpenPreference(systemAgentsPreferenceKey, systemDetails.open));
 }
 function renderSkillDaily(days = [], range = null, source = { status: 'loading' }) {
   const el = $('#skill-daily');
@@ -678,6 +714,8 @@ const bindDisplayLimit = (id, key, assign, fallback = 5) => {
 bindDisplayLimit('#skills-limit', skillsLimitPreferenceKey, (value) => { skillsLimit = value; });
 bindDisplayLimit('#model-limit', modelLimitPreferenceKey, (value) => { modelLimit = value; });
 bindDisplayLimit('#project-limit', projectLimitPreferenceKey, (value) => { projectLimit = value; }, 4);
+bindOpenPreference('#agents-panel', agentsPanelPreferenceKey);
+bindOpenPreference('#skills-panel', skillsPanelPreferenceKey);
 const normalizeRate = (input) => {
   const num = Number(input.value.trim().replace(',', '.'));
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');
