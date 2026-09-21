@@ -233,7 +233,7 @@ function pullUpdate() {
   } catch (error) { throw new Error((error.stderr?.toString().trim() || error.message).slice(-300) || 'git pull impossible'); }
 }
 function sendJson(res, payload, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(payload)); }
-function sendFile(res, file) { if (!fs.existsSync(file)) { res.writeHead(404); res.end('Not found'); return; } const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html'; res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store' }); fs.createReadStream(file).pipe(res); }
+function sendFile(res, file) { if (!fs.existsSync(file)) { res.writeHead(404); res.end('Not found'); return; } const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html'; res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store' }); fs.createReadStream(file).pipe(res); }
 function readBody(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', (chunk) => raw += chunk); req.on('end', () => { try { resolve(JSON.parse(raw || '{}')); } catch { reject(new Error('JSON invalide')); } }); req.on('error', reject); }); }
 
 const server = http.createServer(async (req, res) => {
@@ -259,6 +259,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/version') return sendJson(res, { stamp: Math.max(...['index.html', 'app.js', 'style.css'].map((f) => fs.statSync(path.join(publicDir, f)).mtimeMs)), commit: localCommit, activityVersion: ACTIVITY_VERSION });
     if (req.method === 'POST' && url.pathname === '/api/update') return sendJson(res, pullUpdate());
+    if (url.pathname === '/favicon.svg') return sendFile(res, path.join(root, 'assets', 'logo.svg'));
     if (url.pathname === '/') return sendFile(res, path.join(publicDir, 'index.html'));
     if (url.pathname === '/app.js') return sendFile(res, path.join(publicDir, 'app.js'));
     if (url.pathname === '/style.css') return sendFile(res, path.join(publicDir, 'style.css'));

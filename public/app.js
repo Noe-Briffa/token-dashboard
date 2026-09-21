@@ -124,6 +124,10 @@ const addDays = (value, days) => { const date = new Date(`${value}T00:00:00Z`); 
 const mondayOf = (date) => { const value = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())); value.setUTCDate(value.getUTCDate() - (value.getUTCDay() + 6) % 7); return dateOnly(value); };
 const currentActivityWeek = () => { const now = new Date(); const start = mondayOf(now); return { start, end: addDays(start, 6) }; };
 const activityPreferenceKey = 'usage-monitor-activity-week';
+const skillsLimitPreferenceKey = 'usage-monitor-skills-limit';
+const normalizeSkillsLimit = (value) => Math.min(100, Math.max(1, Math.round(Number(value) || 10)));
+const readSkillsLimit = () => { try { return normalizeSkillsLimit(localStorage.getItem(skillsLimitPreferenceKey)); } catch { return 10; } };
+let skillsLimit = readSkillsLimit();
 const readActivityWeek = () => { try { const value = sessionStorage.getItem(activityPreferenceKey); return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : null; } catch { return null; } };
 let activityWeekStart = readActivityWeek() || currentActivityWeek().start;
 let activityFollowsCurrent = !readActivityWeek();
@@ -279,11 +283,13 @@ function renderSkillDaily(days = [], range = null, source = { status: 'loading' 
   }
   const skills = [...totals.keys()].sort((a, b) => totals.get(b) - totals.get(a) || a.localeCompare(b));
   const totalActivations = [...totals.values()].reduce((sum, value) => sum + value, 0);
-  if ($('#skills-summary')) $('#skills-summary').textContent = `${number.format(totalActivations)} appel${totalActivations === 1 ? '' : 's'} explicite${totalActivations === 1 ? '' : 's'} · ${number.format(skills.length)} skill${skills.length === 1 ? '' : 's'}`;
+  const visibleSkills = skills.slice(0, skillsLimit);
+  if ($('#skills-limit')) $('#skills-limit').value = String(skillsLimit);
+  if ($('#skills-summary')) $('#skills-summary').textContent = `${number.format(totalActivations)} appel${totalActivations === 1 ? '' : 's'} explicite${totalActivations === 1 ? '' : 's'} · ${number.format(skills.length)} skill${skills.length === 1 ? '' : 's'} · affichage ${number.format(visibleSkills.length)}`;
   if (!skills.length) { el.innerHTML = '<p class="muted agent-empty">Aucun appel explicite au tool skill sur cette période.</p>'; return; }
   const dayLabel = (day) => new Date(`${day}T00:00:00Z`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' }).replace('.', '');
   const header = days.map((day) => `<th scope="col">${escape(dayLabel(day.day))}</th>`).join('');
-  const rows = skills.map((skill) => { const agents = [...(byAgent.get(skill)?.entries() || [])].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); const breakdown = agents.map(([agent, count]) => `<span class="skill-agent"><b>${escape(agent)}</b> ${number.format(count)}</span>`).join(''); return `<tr><th scope="row"><span class="skill-name">${escape(skill)}</span><span class="skill-agents">${breakdown}</span></th>${days.map((day) => { const count = counts.get(`${day.day}\u0000${skill}`) || 0; return `<td>${count ? number.format(count) : '<span class="agent-zero">—</span>'}</td>`; }).join('')}<td class="agent-total">${number.format(totals.get(skill))}</td></tr>`; }).join('');
+  const rows = visibleSkills.map((skill) => { const agents = [...(byAgent.get(skill)?.entries() || [])].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); const breakdown = agents.map(([agent, count]) => `<span class="skill-agent"><b>${escape(agent)}</b> ${number.format(count)}</span>`).join(''); return `<tr><th scope="row"><span class="skill-name">${escape(skill)}</span><span class="skill-agents">${breakdown}</span></th>${days.map((day) => { const count = counts.get(`${day.day}\u0000${skill}`) || 0; return `<td>${count ? number.format(count) : '<span class="agent-zero">—</span>'}</td>`; }).join('')}<td class="agent-total">${number.format(totals.get(skill))}</td></tr>`; }).join('');
   el.innerHTML = `<div class="agent-table-wrap"><table class="agent-table skill-table"><thead><tr><th scope="col">Skill · agent</th>${header}<th scope="col">Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 const activityDayNames = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
@@ -645,6 +651,13 @@ themeMedia.addEventListener('change', () => { if (themePreference === 'system') 
 const updateTokenThresholdState = () => { $('#min-tokens').disabled = $('#metric').value !== 'total'; };
 ['#metric', '#cost-mode', '#platform', '#agent', '#model', '#project', '#from', '#to', '#chart-granularity', '#min-tokens'].forEach((id) => $(id).addEventListener('input', () => { if (id === '#from' || id === '#to') $('#period').value = 'custom'; if (id === '#metric') updateTokenThresholdState(); load(); }));
 $('#period').addEventListener('input', () => { setPeriod(); load(); });
+$('#skills-limit').value = String(skillsLimit);
+$('#skills-limit').addEventListener('change', () => {
+  skillsLimit = normalizeSkillsLimit($('#skills-limit').value);
+  $('#skills-limit').value = String(skillsLimit);
+  try { localStorage.setItem(skillsLimitPreferenceKey, String(skillsLimit)); } catch { /* preference remains session-only */ }
+  load();
+});
 const normalizeRate = (input) => {
   const num = Number(input.value.trim().replace(',', '.'));
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');
