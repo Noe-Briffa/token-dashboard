@@ -48,7 +48,7 @@ test('serves the dashboard before the initial collection finishes', async () => 
     const favicon = await fetch(url + '/favicon.svg', { signal: AbortSignal.timeout(1000) });
     assert.equal(favicon.status, 200);
     assert.match(favicon.headers.get('content-type') || '', /^image\/svg\+xml/);
-    assert.match(await favicon.text(), /AI Usage Monitor/);
+    assert.match(await favicon.text(), /Token Dashboard/);
     const data = await (await fetch(url + '/api/data?from=2026-09-01&to=2026-09-02&activityFrom=2026-09-14&activityTo=2026-09-20', { signal: AbortSignal.timeout(1000) })).json();
     assert.equal(data.activityVersion, 3);
     assert.equal(typeof data.skillSource.eventCount, 'number');

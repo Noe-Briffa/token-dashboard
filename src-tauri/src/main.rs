@@ -79,7 +79,7 @@ fn open_window(app: &AppHandle, url: &str) -> Result<(), String> {
         .parse()
         .map_err(|error: url::ParseError| error.to_string())?;
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
-        .title("AI Usage Monitor")
+        .title("Token Dashboard")
         .inner_size(1440.0, 960.0)
         .min_inner_size(960.0, 680.0)
         .build()
@@ -163,7 +163,7 @@ fn start_server(app: &AppHandle) -> Result<(), String> {
     let handle = app.clone();
     thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if let Some(url) = line.strip_prefix("AI Usage Monitor: ") {
+            if let Some(url) = line.strip_prefix("Token Dashboard: ") {
                 if let Err(error) = open_window(&handle, url) {
                     eprintln!("Unable to open dashboard: {error}");
                 }
@@ -201,7 +201,7 @@ fn main() {
             TrayIconBuilder::with_id("main")
                 .menu(&menu)
                 .icon(icon)
-                .tooltip("AI Usage Monitor")
+                .tooltip("Token Dashboard")
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "open" => show_or_start(app),
                     "quit" => {
@@ -226,7 +226,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building AI Usage Monitor")
+        .expect("error while building Token Dashboard")
         .run(|app: &AppHandle, event| {
             if let RunEvent::ExitRequested { api, .. } = event {
                 if !app.state::<QuitState>().0.load(Ordering::SeqCst) {

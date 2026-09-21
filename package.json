@@ -21,7 +21,7 @@
   },
   "build": {
     "appId": "com.noebr.aiusagemonitor",
-    "productName": "AI Usage Monitor",
+    "productName": "Token Dashboard",
     "files": [
       "electron/**/*",
       "assets/**/*",

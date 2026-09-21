@@ -13,7 +13,7 @@ rapide sur écran large, puis en vérification détaillée dans les sessions.
 
 ## Product Purpose
 
-AI Usage Monitor transforme les sessions locales Codex et OpenCode en une vue
+Token Dashboard transforme les sessions locales Codex et OpenCode en une vue
 fiable de consommation. Le produit doit permettre de répondre rapidement à
 trois questions : combien ai-je utilisé, où part le coût, et quelles sessions
 expliquent ce résultat. La confiance vient de données explicables, de filtres

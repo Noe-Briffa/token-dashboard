@@ -1,5 +1,5 @@
 @echo off
-title AI Usage Monitor
+title Token Dashboard
 cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 (

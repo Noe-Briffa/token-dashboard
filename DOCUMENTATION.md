@@ -1,10 +1,10 @@
-# AI Usage Monitor
+# Token Dashboard
 
 Documentation complète du projet `token-dashboard`.
 
 ## 1. Résumé
 
-AI Usage Monitor est un tableau de bord local qui transforme les données de consommation de Codex et OpenCode en métriques lisibles :
+Token Dashboard est un tableau de bord local qui transforme les données de consommation de Codex et OpenCode en métriques lisibles :
 
 - nombre de sessions ;
 - tokens d'entrée ;
@@ -463,7 +463,7 @@ L'interface est une page HTML unique dans `public/index.html`. Le rendu est pilo
 
 L'en-tête affiche :
 
-- le nom `AI Usage Monitor` ;
+- le nom `Token Dashboard` ;
 - l'état et l'heure de la dernière actualisation ;
 - le bouton de mise à jour Git lorsqu'une version distante est détectée ;
 - le sélecteur de thème ;
@@ -1216,6 +1216,6 @@ Pour préserver le comportement du projet :
 
 ## Conclusion
 
-AI Usage Monitor est un outil local de lecture et d'explication de la consommation IA. Son architecture reste volontairement simple : des fichiers source locaux, une projection SQLite, un serveur HTTP Node natif et une page frontend sans dépendances.
+Token Dashboard est un outil local de lecture et d'explication de la consommation IA. Son architecture reste volontairement simple : des fichiers source locaux, une projection SQLite, un serveur HTTP Node natif et une page frontend sans dépendances.
 
 La valeur principale du projet vient de la normalisation des données hétérogènes Codex/OpenCode, du découpage temporel cohérent Europe/Paris, des calculs de coût configurables et de la visibilité immédiate sur les quotas et les concentrations d'usage.

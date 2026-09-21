@@ -282,7 +282,7 @@ export function startServer({ open = false, port = process.env.PORT ? Number(pro
       server.off('error', onError);
       const address = server.address();
       const url = `http://127.0.0.1:${address.port}`;
-      console.log(`AI Usage Monitor: ${url}`);
+      console.log(`Token Dashboard: ${url}`);
       initialRefreshTimer = setTimeout(() => {
         initialRefreshTimer = null;
         refresh().catch((error) => console.error(`Initial refresh failed: ${error.message}`));

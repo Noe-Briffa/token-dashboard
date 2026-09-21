@@ -1,4 +1,4 @@
-# AI Usage Monitor
+# Token Dashboard
 
 Petit tableau de bord local pour suivre ta consommation Codex et OpenCode. Tout reste sur ta machine : les sessions sont lues en local, stockées dans SQLite, et le dashboard tourne sur http://127.0.0.1 avec un port affiché au démarrage.
 

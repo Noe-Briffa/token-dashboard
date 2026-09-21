@@ -40,7 +40,7 @@ function trayIcon() {
 }
 
 function showWindow() {
-  if (!window) return openWindow().catch((error) => console.error(`AI Usage Monitor reopen failed: ${error.message}`));
+  if (!window) return openWindow().catch((error) => console.error(`Token Dashboard reopen failed: ${error.message}`));
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
@@ -74,7 +74,7 @@ function createWindow(url) {
 
 function createTray() {
   tray = new Tray(trayIcon());
-  tray.setToolTip('AI Usage Monitor');
+  tray.setToolTip('Token Dashboard');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Ouvrir le dashboard', click: showWindow },
     { type: 'separator' },
@@ -88,7 +88,7 @@ const messageData = (event, message) => message ?? event?.data ?? event;
 
 function startServerProcess() {
   const workerPath = path.join(electronDir, 'server-worker.js');
-  serverProcess = utilityProcess.fork(workerPath, [], { serviceName: 'AI Usage Monitor server', stdio: 'pipe', execArgv: ['--expose-gc', '--max-old-space-size=256'] });
+  serverProcess = utilityProcess.fork(workerPath, [], { serviceName: 'Token Dashboard server', stdio: 'pipe', execArgv: ['--expose-gc', '--max-old-space-size=256'] });
   serverProcess.stderr?.on('data', (chunk) => console.error(`Server worker: ${chunk}`));
   serverProcess.stdout?.on('data', (chunk) => console.log(`Server worker: ${chunk}`));
   return new Promise((resolve, reject) => {
@@ -157,7 +157,7 @@ if (singleInstance) {
   app.on('second-instance', showWindow);
   app.on('window-all-closed', () => {});
   app.whenReady().then(start).catch((error) => {
-    console.error(`AI Usage Monitor failed to start: ${error.message}`);
+    console.error(`Token Dashboard failed to start: ${error.message}`);
     app.quit();
   });
 
