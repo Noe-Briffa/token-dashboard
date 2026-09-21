@@ -5,14 +5,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { importSessions, openDatabase } from '../src/collector.js';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 test('serves the dashboard before the initial collection finishes', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-usage-server-'));
+  const database = openDatabase(path.join(dataDir, 'usage.sqlite'));
+  importSessions(database, [
+    { platform: 'opencode', agent: 'explore', id: 'opencode:session-1:gpt-test:2026-09-18:10', sourcePath: 'segment-1', startedAt: '2026-09-18T12:00:00.000Z', total: 10 },
+    { platform: 'opencode', agent: 'explore', id: 'opencode:session-1:gpt-test:2026-09-18:11', sourcePath: 'segment-2', startedAt: '2026-09-18T12:30:00.000Z', total: 10 },
+    { platform: 'opencode', agent: 'build', id: 'opencode:session-2', sourcePath: 'session-2', startedAt: '2026-09-19T12:00:00.000Z', total: 10 },
+    { platform: 'opencode', agent: 'general', id: 'opencode:session-3', sourcePath: 'session-3', startedAt: '2026-09-18T13:00:00.000Z', total: 10 },
+  ]);
+  database.close();
   const child = spawn(process.execPath, ['src/server.js'], {
     cwd: root,
-    env: { ...process.env, PORT: '0', AI_USAGE_DATA_DIR: dataDir },
+    env: { ...process.env, PORT: '0', AI_USAGE_DATA_DIR: dataDir, AI_USAGE_LEGACY_DATA_DIR: path.join(dataDir, 'legacy') },
     stdio: ['ignore', 'pipe', 'ignore'],
   });
   try {
@@ -34,6 +43,11 @@ test('serves the dashboard before the initial collection finishes', async () => 
     assert.deepEqual(data.activityRange, { start: '2026-09-14', end: '2026-09-20' });
     assert.equal(data.activity.length, 168);
     assert.equal(data.activity.every((cell) => Number.isInteger(cell.dayIndex) && cell.dayIndex >= 0 && cell.dayIndex < 7 && cell.hour >= 0 && cell.hour < 24), true);
+    const agents = await (await fetch(url + '/api/data?from=2026-09-18&to=2026-09-19', { signal: AbortSignal.timeout(1000) })).json();
+    assert.deepEqual(agents.agentDaily, [
+      { day: '2026-09-18', agents: [{ agent: 'explore', sessions: 1 }] },
+      { day: '2026-09-19', agents: [] },
+    ]);
   } finally {
     child.kill();
     if (child.exitCode === null) await new Promise((resolve) => child.once('exit', resolve));

@@ -220,6 +220,25 @@ function renderChart(days, range, pricing = []) {
   }).join('');
   $('#chart').innerHTML = `<div class="chart-axis">${ticks.map((tick) => `<span>${isTokens ? compact.format(tick) : money.format(tick)}</span>`).join('')}</div><div class="chart-plot${dense ? ' dense' : ''}"><div class="chart-grid">${ticks.map(() => '<i></i>').join('')}</div><div class="chart-bars${dense ? ' dense' : ''}">${bars}</div></div>`;
 }
+function renderAgentDaily(days = [], range = null) {
+  const el = $('#agent-daily');
+  if (!el) return;
+  if ($('#agents-range') && range) $('#agents-range').textContent = `${range.start} — ${range.end}`;
+  const totals = new Map(), counts = new Map();
+  for (const day of days) for (const row of day.agents || []) {
+    totals.set(row.agent, (totals.get(row.agent) || 0) + Number(row.sessions || 0));
+    counts.set(`${day.day}\u0000${row.agent}`, Number(row.sessions || 0));
+  }
+  const agents = [...totals.keys()].sort((a, b) => totals.get(b) - totals.get(a) || a.localeCompare(b));
+  const totalInvocations = [...totals.values()].reduce((sum, value) => sum + value, 0);
+  if ($('#agents-summary')) $('#agents-summary').textContent = `${number.format(totalInvocations)} invocation${totalInvocations === 1 ? '' : 's'} · ${number.format(agents.length)} agent${agents.length === 1 ? '' : 's'} actif${agents.length === 1 ? '' : 's'}`;
+  if (!agents.length) { el.innerHTML = '<p class="muted agent-empty">Aucune invocation OpenCode sur la période.</p>'; return; }
+  const dayLabel = (day) => new Date(`${day}T00:00:00Z`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' }).replace('.', '');
+  const agentLabel = (agent) => agent.startsWith('@') ? agent : `@${agent}`;
+  const header = days.map((day) => `<th scope="col">${escape(dayLabel(day.day))}</th>`).join('');
+  const rows = agents.map((agent) => `<tr><th scope="row">${escape(agentLabel(agent))}</th>${days.map((day) => { const count = counts.get(`${day.day}\u0000${agent}`) || 0; return `<td>${count ? number.format(count) : '<span class="agent-zero">—</span>'}</td>`; }).join('')}<td class="agent-total">${number.format(totals.get(agent))}</td></tr>`).join('');
+  el.innerHTML = `<div class="agent-table-wrap"><table class="agent-table"><thead><tr><th scope="col">Agent</th>${header}<th scope="col">Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
 const activityDayNames = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 function heatRoundUnit(value) { return 10 ** Math.max(0, Math.floor(Math.log10(Math.max(value, 1))) - 1); }
 function heatRoundCeil(value) { const unit = heatRoundUnit(value); return Math.ceil(value / unit) * unit; }
@@ -437,7 +456,7 @@ function render(data) {
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAgentDaily(data.agentDaily, data.range); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 let loadVersion = 0;
 let refreshPromise = null;

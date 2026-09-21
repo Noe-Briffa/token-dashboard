@@ -116,6 +116,15 @@ function activityCalendar(query) {
   const end = isoDate.test(requestedEnd || '') ? requestedEnd : shiftDate(start, 6);
   return { start, end };
 }
+const openCodeSessionId = "CASE WHEN instr(substr(s.id, 10), ':') > 0 THEN substr(substr(s.id, 10), 1, instr(substr(s.id, 10), ':') - 1) ELSE substr(s.id, 10) END";
+const hiddenOpenCodeAgents = "LOWER(COALESCE(s.agent, '')) NOT IN ('plan', 'build', 'general')";
+function dailyAgents(base, params, days) {
+  const scopedBase = base.includes(' WHERE ') ? `${base} AND s.platform='opencode'` : `${base} WHERE s.platform='opencode'`;
+  const rows = db.prepare(`SELECT date(s.started_at,'localtime') day, s.agent, COUNT(DISTINCT ${openCodeSessionId}) sessions ${scopedBase} AND ${hiddenOpenCodeAgents} GROUP BY day, s.agent ORDER BY day DESC, sessions DESC, s.agent`).all(...params);
+  const grouped = new Map(days.map((day) => [day, []]));
+  for (const row of rows) grouped.get(row.day)?.push({ agent: row.agent || 'OpenCode', sessions: Number(row.sessions) || 0 });
+  return days.map((day) => ({ day, agents: grouped.get(day) }));
+}
 const activityClock = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Paris', weekday: 'short', hour: '2-digit', hourCycle: 'h23' });
 const activityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 function activityHeatmap(base, params, price) {
@@ -146,6 +155,7 @@ function data(query) {
   const dailyRows = db.prepare(`SELECT date(s.started_at,'localtime') day, COALESCE(s.model,'Modèle inconnu') model, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY day, s.model`).all(...params);
   const byDay = new Map(range.days.map((day) => [day, []])); for (const row of dailyRows) byDay.get(row.day)?.push(row);
   const daily = range.days.map((day) => ({ day, series: byDay.get(day) }));
+  const agentDaily = dailyAgents(base, params, range.days);
   const activity = activityHeatmap(activityBase, activityFilters.params, price);
   const models = db.prepare(`SELECT COALESCE(s.model,'Modèle inconnu') label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.model ORDER BY total DESC`).all(...params);
   const platforms = db.prepare(`SELECT s.platform label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.platform ORDER BY total DESC`).all(...params);
@@ -154,7 +164,7 @@ function data(query) {
   const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
   const sourceRows = db.prepare('SELECT platform, COUNT(*) sessions FROM sessions GROUP BY platform').all();
   const sources = [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceState.codex.sourceSessions ?? (sourceRows.find((row) => row.platform === 'codex')?.sessions || 0) }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceState.opencode.sourceSessions ?? (sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0) }];
-  return { activityVersion: ACTIVITY_VERSION, summary, daily, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
+  return { activityVersion: ACTIVITY_VERSION, summary, daily, agentDaily, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
 }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');
