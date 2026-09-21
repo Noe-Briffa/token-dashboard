@@ -1,6 +1,6 @@
 # Token Dashboard
 
-Token Dashboard est un tableau de bord local pour suivre la consommation de Codex et OpenCode. Les sessions restent sur ta machine : elles sont lues localement, stockées dans SQLite, puis affichées dans une interface servie par Node sur `http://127.0.0.1`.
+Token Dashboard est un tableau de bord local principalement conçu pour OpenCode. Il peut aussi lire la consommation Codex, mais plusieurs fonctions avancées, notamment les vues par agent et le suivi des skills, ne sont disponibles qu'avec OpenCode. Les sessions restent sur ta machine : elles sont lues localement, stockées dans SQLite, puis affichées dans une interface servie par Node sur `http://127.0.0.1`.
 
 ## Démarrage rapide
 
@@ -76,7 +76,7 @@ Un bandeau affiche les limites Codex en temps réel pour la fenêtre de 5 heures
 
 L'historique des limites est lu dans SQLite pendant la récupération des limites temps réel. Le dashboard peut donc afficher les points déjà enregistrés avant la fin de la requête réseau.
 
-Les appels explicites aux skills OpenCode sont regroupés par jour et par agent. Les limites d'affichage des skills, modèles et projets sont réglables séparément dans l'interface.
+Les appels explicites aux skills OpenCode sont regroupés par jour et par agent. Ces vues, comme les matrices d'activité par agent, nécessitent OpenCode. Les limites d'affichage des skills, modèles et projets sont réglables séparément dans l'interface.
 
 `npm run collect` importe les données sans lancer le dashboard.
 
