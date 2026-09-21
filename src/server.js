@@ -76,6 +76,8 @@ async function adtentionBalance() {
   return adtentionCache.value;
 }
 function subscriptionEnabled() { return db.prepare("SELECT value FROM app_settings WHERE key='openai_subscription'").get()?.value === 'true'; }
+const normalizedProjectSql = "LOWER(REPLACE(COALESCE(s.project, ''), char(92), '/'))";
+const generalProjectSql = `(${normalizedProjectSql} = 'c:/users/noebr' OR ${normalizedProjectSql} = 'c:/users/noebr/documents/opencode' OR ${normalizedProjectSql} LIKE 'c:/users/noebr/documents/opencode/%')`;
 function costs() {
   const api = estimatedCost;
   const openAiModel = `(LOWER(COALESCE(s.provider,''))='openai' OR LOWER(COALESCE(s.model,'')) GLOB 'gpt-*' OR LOWER(COALESCE(s.model,'')) LIKE '%/gpt-%' OR LOWER(COALESCE(s.model,'')) GLOB 'o[134]-*' OR LOWER(COALESCE(s.model,'')) GLOB 'codex-*' OR LOWER(COALESCE(s.model,'')) LIKE 'chatgpt-%')`;
@@ -96,7 +98,10 @@ function filters(query) {
   for (const [key, column] of [['platform', 's.platform'], ['agent', 's.agent'], ['model', 's.model']]) {
     if (query.get(key)) { clauses.push(`${column} = ?`); params.push(query.get(key)); }
   }
-  if (query.get('project')) { clauses.push('s.project LIKE ?'); params.push(`%${query.get('project')}%`); }
+  if (query.get('project')) {
+    if (query.get('project').toLocaleLowerCase('fr-FR') === 'général') clauses.push(generalProjectSql);
+    else { clauses.push('s.project LIKE ?'); params.push(`%${query.get('project')}%`); }
+  }
   if (query.get('from')) { clauses.push("date(s.started_at,'localtime') >= date(?)"); params.push(query.get('from')); }
   if (query.get('to')) { clauses.push("date(s.started_at,'localtime') <= date(?)"); params.push(query.get('to')); }
   return { where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };

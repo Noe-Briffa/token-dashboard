@@ -5,9 +5,12 @@ const shortMoney = (amount) => money.format(amount).replace(/US$/, '').trimEnd()
 let modelColors = new Map();
 let platformColors = new Map();
 let projectColors = new Map();
+const generalProjectRoot = 'c:/users/noebr/documents/opencode';
 const shortProject = (label) => {
   if (!label || label === 'Projet inconnu') return 'Projet inconnu';
-  const parts = String(label).split(/[/\\]/).filter(Boolean);
+  const normalized = String(label).replaceAll('\\', '/').replace(/\/+$/, ''), lower = normalized.toLowerCase();
+  if (lower === 'c:/users/noebr' || lower === generalProjectRoot || lower.startsWith(`${generalProjectRoot}/`)) return 'Général';
+  const parts = normalized.split('/').filter(Boolean);
   return parts.length ? parts[parts.length - 1] : 'Projet inconnu';
 };
 const $ = (selector) => document.querySelector(selector);

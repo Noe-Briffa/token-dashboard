@@ -17,6 +17,9 @@ test('serves the dashboard before the initial collection finishes', async () => 
     { platform: 'opencode', agent: 'explore', id: 'opencode:session-1:gpt-test:2026-09-18:11', sourcePath: 'segment-2', startedAt: '2026-09-18T12:30:00.000Z', total: 10 },
     { platform: 'opencode', agent: 'build', id: 'opencode:session-2', sourcePath: 'session-2', startedAt: '2026-09-19T12:00:00.000Z', total: 10 },
     { platform: 'opencode', agent: 'general', id: 'opencode:session-3', sourcePath: 'session-3', startedAt: '2026-09-18T13:00:00.000Z', total: 10 },
+    { platform: 'opencode', agent: 'build', id: 'opencode:general-root', sourcePath: 'general-root', project: 'C:/Users/noebr', startedAt: '2026-09-18T14:00:00.000Z', total: 10 },
+    { platform: 'opencode', agent: 'build', id: 'opencode:general-child', sourcePath: 'general-child', project: 'C:\\Users\\noebr\\Documents\\Opencode\\demo', startedAt: '2026-09-18T15:00:00.000Z', total: 10 },
+    { platform: 'opencode', agent: 'build', id: 'opencode:other-project', sourcePath: 'other-project', project: 'C:/Users/noebr/Documents/Other', startedAt: '2026-09-18T16:00:00.000Z', total: 10 },
   ]);
   importOpenCodeSkillEvents(database, [
     { id: 'skill-1', day: '2026-09-18', skill: 'caveman', agent: 'plan', time_created: Date.parse('2026-09-18T14:00:00.000Z') },
@@ -63,6 +66,8 @@ test('serves the dashboard before the initial collection finishes', async () => 
       { day: '2026-09-18', skills: [{ skill: 'caveman', agent: 'build', activations: 1 }, { skill: 'caveman', agent: 'plan', activations: 1 }] },
       { day: '2026-09-19', skills: [] },
     ]);
+    const general = await (await fetch(url + '/api/data?from=2026-09-18&to=2026-09-19&project=G%C3%A9n%C3%A9ral', { signal: AbortSignal.timeout(1000) })).json();
+    assert.equal(general.summary.sessions, 2);
   } finally {
     child.kill();
     if (child.exitCode === null) await new Promise((resolve) => child.once('exit', resolve));
