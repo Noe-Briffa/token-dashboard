@@ -303,6 +303,10 @@ button.head-toggle:hover { color: var(--ink); background: none; border: none; te
 .activity-controls button:first-child,
 .activity-controls button:last-child { width: 34px; padding-inline: 5px; font-size: 16px; font-weight: 500; }
 .activity-controls button:last-child:disabled { color: var(--ink-muted); background: transparent; border-color: transparent; opacity: .42; }
+.agents-panel { position: relative; }
+.agents-panel[open] > summary { margin-bottom: 20px; }
+.agents-panel > .agents-controls-row { position: absolute; top: 8px; right: 20px; margin: 0; }
+#agent-daily { margin-top: 10px; }
 .activity-summary { margin: -8px 0 10px; }
 .activity-heatmap-wrap { overflow-x: auto; padding-bottom: 4px; }
 .activity-grid { display: grid; grid-template-columns: 64px repeat(24, minmax(18px, 1fr)) minmax(48px, 1.5fr); gap: 4px; min-width: 820px; }
@@ -440,6 +444,7 @@ td.project { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
   main { padding: 0 16px 32px; }
   h1 { font-size: 27px; }
   .skills-panel > .skills-controls { position: static; margin: 14px 0; }
+  .agents-panel > .agents-controls-row { position: static; margin: 12px 0 4px; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .metric { padding: 14px; }
   .metric strong { font-size: 19px; }

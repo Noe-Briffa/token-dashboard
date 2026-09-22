@@ -136,14 +136,83 @@ function activityCalendar(query) {
   const end = isoDate.test(requestedEnd || '') ? requestedEnd : shiftDate(start, 6);
   return { start, end };
 }
-const openCodeSessionId = "CASE WHEN instr(substr(s.id, 10), ':') > 0 THEN substr(substr(s.id, 10), 1, instr(substr(s.id, 10), ':') - 1) ELSE substr(s.id, 10) END";
-const hiddenOpenCodeAgents = "LOWER(COALESCE(s.agent, '')) NOT IN ('plan', 'build', 'general')";
+function agentsCalendar(query) {
+  const requestedStart = query.get('agentsFrom');
+  const requestedEnd = query.get('agentsTo');
+  if (!isoDate.test(requestedStart || '') || !isoDate.test(requestedEnd || '')) return null;
+  if (requestedEnd < requestedStart) return null;
+  return { start: requestedStart, end: requestedEnd };
+}
+function dateRangeDays(start, end) {
+  const days = [];
+  for (let day = start; day <= end; day = shiftDate(day, 1)) {
+    days.push(day);
+    if (days.length > 366) break;
+  }
+  return days;
+}
+const systemOpenCodeAgents = new Set(['plan', 'build', 'general']);
+const parisClock = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+function parisDayStart(day) {
+  const reference = Date.parse(`${day}T00:00:00Z`);
+  const parts = Object.fromEntries(parisClock.formatToParts(new Date(reference)).map(({ type, value }) => [type, value]));
+  const wallClock = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+  return reference - (wallClock - reference);
+}
+function mergeIntervals(intervals) {
+  const sorted = intervals.filter(([start, end]) => end > start).sort(([a], [b]) => a - b);
+  let total = 0, currentStart = null, currentEnd = null;
+  for (const [start, end] of sorted) {
+    if (currentStart == null) { currentStart = start; currentEnd = end; }
+    else if (start <= currentEnd) currentEnd = Math.max(currentEnd, end);
+    else { total += currentEnd - currentStart; currentStart = start; currentEnd = end; }
+  }
+  return currentStart == null ? 0 : total + currentEnd - currentStart;
+}
 function dailyAgents(base, params, days) {
   const scopedBase = base.includes(' WHERE ') ? `${base} AND s.platform='opencode'` : `${base} WHERE s.platform='opencode'`;
-  const rows = db.prepare(`SELECT date(s.started_at,'localtime') day, s.agent, COUNT(DISTINCT ${openCodeSessionId}) sessions ${scopedBase} AND ${hiddenOpenCodeAgents} GROUP BY day, s.agent ORDER BY day DESC, sessions DESC, s.agent`).all(...params);
-  const grouped = new Map(days.map((day) => [day, []]));
-  for (const row of rows) grouped.get(row.day)?.push({ agent: row.agent || 'OpenCode', sessions: Number(row.sessions) || 0 });
-  return days.map((day) => ({ day, agents: grouped.get(day) }));
+  const rows = db.prepare(`SELECT s.id, s.agent, s.started_at, s.ended_at, s.duration_seconds, s.model_calls ${scopedBase}`).all(...params);
+  const wantedDays = new Set(days), byDay = new Map(), allByDay = new Map();
+  const ensureDay = (map, day) => { if (!map.has(day)) map.set(day, []); return map.get(day); };
+  for (const row of rows) {
+    const start = Date.parse(row.started_at || '');
+    if (!Number.isFinite(start)) continue;
+    const rawEnd = Date.parse(row.ended_at || '');
+    const end = Number.isFinite(rawEnd) ? Math.max(start, rawEnd) : start + Math.max(0, Number(row.duration_seconds) || 0) * 1000;
+    const agent = row.agent || 'OpenCode';
+    const firstDay = parisDateStr(new Date(start));
+    if (wantedDays.has(firstDay)) {
+      const dayRows = ensureDay(byDay, firstDay);
+      let entry = dayRows.find((item) => item.agent === agent);
+       if (!entry) { entry = { agent, calls: 0, intervals: [] }; dayRows.push(entry); }
+       entry.calls += Number(row.model_calls) || 0;
+    }
+    for (let cursor = start; cursor < end;) {
+      const day = parisDateStr(new Date(cursor));
+      const next = parisDayStart(shiftDate(day, 1));
+      const segmentEnd = Math.min(end, next);
+      if (wantedDays.has(day)) {
+        const dayRows = ensureDay(byDay, day);
+        let entry = dayRows.find((item) => item.agent === agent);
+         if (!entry) { entry = { agent, calls: 0, intervals: [] }; dayRows.push(entry); }
+        entry.intervals.push([cursor, segmentEnd]);
+        const allRows = ensureDay(allByDay, day);
+        allRows.push([cursor, segmentEnd]);
+      }
+      cursor = segmentEnd;
+      if (cursor <= start) break;
+    }
+  }
+  return days.map((day) => ({
+    day,
+    workedSeconds: Math.round(mergeIntervals(allByDay.get(day) || []) / 1000),
+    agents: (byDay.get(day) || []).map((entry) => ({
+      agent: entry.agent,
+      system: systemOpenCodeAgents.has(String(entry.agent).toLowerCase()),
+       calls: entry.calls,
+      workedSeconds: Math.round(mergeIntervals(entry.intervals) / 1000),
+   })).sort((a, b) => b.workedSeconds - a.workedSeconds || b.calls - a.calls || a.agent.localeCompare(b.agent)),
+  }));
 }
 function dailySkills(days, query) {
   if (query.get('platform') && query.get('platform') !== 'opencode') return days.map((day) => ({ day, skills: [] }));
@@ -193,7 +262,20 @@ function data(query) {
   const dailyRows = db.prepare(`SELECT date(s.started_at,'localtime') day, COALESCE(s.model,'Modèle inconnu') model, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY day, s.model`).all(...params);
   const byDay = new Map(range.days.map((day) => [day, []])); for (const row of dailyRows) byDay.get(row.day)?.push(row);
   const daily = range.days.map((day) => ({ day, series: byDay.get(day) }));
-  const agentDaily = dailyAgents(base, params, range.days);
+  const agentWeek = agentsCalendar(query);
+  let agentDaily, agentRange;
+  if (agentWeek) {
+    const agentDays = dateRangeDays(agentWeek.start, agentWeek.end);
+    const agentQuery = new URLSearchParams(query);
+    agentQuery.delete('from'); agentQuery.delete('to');
+    agentQuery.set('from', agentWeek.start); agentQuery.set('to', agentWeek.end);
+    const agentFilters = filters(agentQuery), agentBase = selectBase(agentFilters.where);
+    agentDaily = dailyAgents(agentBase, agentFilters.params, agentDays);
+    agentRange = { start: agentWeek.start, end: agentWeek.end };
+  } else {
+    agentDaily = dailyAgents(base, params, range.days);
+    agentRange = { start: range.start, end: range.end };
+  }
   const skillDaily = dailySkills(range.days, ranged);
   const activity = activityHeatmap(activityBase, activityFilters.params, price);
   const models = db.prepare(`SELECT COALESCE(s.model,'Modèle inconnu') label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.model ORDER BY total DESC`).all(...params);
@@ -205,7 +287,7 @@ function data(query) {
   const sources = [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceState.codex.sourceSessions ?? (sourceRows.find((row) => row.platform === 'codex')?.sessions || 0) }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceState.opencode.sourceSessions ?? (sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0) }];
   const skillSourceStateView = skillSource();
   const skillStatus = skillSourceStateView.status;
-  return { activityVersion: ACTIVITY_VERSION, summary, daily, agentDaily, skillDaily, skillStatus, skillSource: skillSourceStateView, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
+  return { activityVersion: ACTIVITY_VERSION, summary, daily, agentDaily, agentRange, skillDaily, skillStatus, skillSource: skillSourceStateView, activity, activityRange, models, platforms, projects, options, pricing, range, sources };
 }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');

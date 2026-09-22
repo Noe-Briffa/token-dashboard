@@ -24,6 +24,7 @@ try {
         input_tokens AS input, cached_input_tokens AS cached,
         output_tokens AS output, reasoning_tokens AS reasoning,
         total_tokens AS total, reported_cost_usd AS reportedCost
+        , model_calls AS modelCalls
       FROM sessions WHERE platform=?
     `).all(mode === 'codex' ? 'codex' : 'opencode');
     process.stdout.write(JSON.stringify({ result, sessions, skillEvents: [] }));

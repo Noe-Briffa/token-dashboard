@@ -19,6 +19,7 @@ export function openDatabase(file) {
       duration_seconds INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
       cached_input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
       reasoning_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0,
+      model_calls INTEGER NOT NULL DEFAULT 0,
       estimated_cost_usd REAL, updated_at TEXT NOT NULL
     );
   `);
@@ -26,6 +27,7 @@ export function openDatabase(file) {
   if (!columns.has('platform')) db.exec("ALTER TABLE sessions ADD COLUMN platform TEXT NOT NULL DEFAULT 'codex'");
   if (!columns.has('reported_cost_usd')) db.exec('ALTER TABLE sessions ADD COLUMN reported_cost_usd REAL');
   if (!columns.has('provider')) db.exec('ALTER TABLE sessions ADD COLUMN provider TEXT');
+  if (!columns.has('model_calls')) db.exec('ALTER TABLE sessions ADD COLUMN model_calls INTEGER NOT NULL DEFAULT 0');
   db.exec(`
     CREATE TABLE IF NOT EXISTS model_pricing (
       platform TEXT NOT NULL, model TEXT NOT NULL,
@@ -139,6 +141,7 @@ export function normalizeSession(session) {
     endedAt: session.endedAt || null, durationSeconds: integer(session.durationSeconds),
     input: integer(session.input), cached: integer(session.cached), output: integer(session.output),
     reasoning: integer(session.reasoning), total: integer(session.total),
+    modelCalls: integer(session.modelCalls),
     reportedCost: session.reportedCost == null || session.reportedCost === '' ? null : (Number.isFinite(Number(session.reportedCost)) ? Number(session.reportedCost) : null)
   };
 }
@@ -180,7 +183,7 @@ export function parseCodexSession(file) {
     const day = snapshot.stamp ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date(snapshot.stamp)) : null;
     const hour = snapshot.stamp ? parisHour.format(new Date(snapshot.stamp)) : null;
     const key = `${day || 'unknown'}\u0000${hour || ''}\u0000${snapshot.model || ''}`;
-    const delta = buckets.get(key) || { day, hour, model: snapshot.model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+     const delta = buckets.get(key) || { day, hour, model: snapshot.model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0, calls: 0 };
     delta.firstAt = delta.firstAt || snapshot.stamp;
     delta.lastAt = snapshot.stamp || delta.lastAt;
     for (const field of ['input', 'cached', 'output', 'reasoning', 'total']) delta[field] += Math.max(0, snapshot.usage[field] - previous.usage[field]);
@@ -212,22 +215,22 @@ export function parseCodexSession(file) {
       ...base, id, sourcePath: isSingle ? file : `${file}:${bucket.day || 'unknown'}:${bucket.hour || 'unknown'}:${bucket.model || 'unknown'}`,
       model: bucket.model, startedAt: bucket.firstAt || dayStamp, endedAt: bucket.lastAt || dayStamp,
       durationSeconds: start && end ? Math.max(0, Math.round((end - start) / 1000)) : 0,
-      input: bucket.input, cached: bucket.cached, output: bucket.output, reasoning: bucket.reasoning, total: bucket.total,
+      input: bucket.input, cached: bucket.cached, output: bucket.output, reasoning: bucket.reasoning, total: bucket.total, modelCalls: bucket.calls,
     });
   });
 }
 
 export function importSessions(db, sessions) {
   const upsert = db.prepare(`
-    INSERT OR REPLACE INTO sessions (id, platform, provider, agent, source_path, project, model, started_at, ended_at, duration_seconds, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, reported_cost_usd, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO sessions (id, platform, provider, agent, source_path, project, model, started_at, ended_at, duration_seconds, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, model_calls, reported_cost_usd, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   let imported = 0;
   const seen = new Set();
   const ensurePricing = db.prepare("INSERT OR IGNORE INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, pricing_unit, updated_at) VALUES (?, ?, 0, 0, 0, 0, 'per_1M_tokens', datetime('now'))");
   for (const raw of sessions) {
     const item = normalizeSession(raw);
-    upsert.run(item.id, item.platform, item.provider, item.agent, item.sourcePath, item.project, item.model, item.startedAt, item.endedAt, item.durationSeconds, item.input, item.cached, item.output, item.reasoning, item.total, item.reportedCost, new Date().toISOString());
+    upsert.run(item.id, item.platform, item.provider, item.agent, item.sourcePath, item.project, item.model, item.startedAt, item.endedAt, item.durationSeconds, item.input, item.cached, item.output, item.reasoning, item.total, item.modelCalls, item.reportedCost, new Date().toISOString());
     imported++;
     // nouveau modèle utilisé => ligne prix à saisir, jamais de doublon (INSERT OR IGNORE)
     const key = `${item.platform}__${item.model}`;
@@ -577,15 +580,16 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated
               const localDay = ts ? new Date(Number(ts)).toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' }) : null;
               const localHour = ts ? parisHour.format(new Date(Number(ts))) : null;
               const key = localDay ? `${mid}__${localDay}__${localHour || ''}` : mid;
-              const cur = perDayModel.get(key) || { provider: prov, model: mid, day: localDay, hour: localHour, firstAt: ts, lastAt: ts, input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+               const cur = perDayModel.get(key) || { provider: prov, model: mid, day: localDay, hour: localHour, firstAt: ts, lastAt: ts, input: 0, cached: 0, output: 0, reasoning: 0, total: 0, calls: 0 };
               cur.provider = prov || cur.provider;
               if (ts != null && (cur.firstAt == null || ts < cur.firstAt)) cur.firstAt = ts;
               if (ts != null && (cur.lastAt == null || ts > cur.lastAt)) cur.lastAt = ts;
               cur.input += integer(message.input_tokens);
               cur.cached += integer(message.cached_tokens);
               cur.output += integer(message.output_tokens);
-              cur.reasoning += integer(message.reasoning_tokens);
-              cur.total += integer(message.total_tokens || (integer(message.input_tokens) + integer(message.cached_tokens) + integer(message.output_tokens) + integer(message.reasoning_tokens)));
+               cur.reasoning += integer(message.reasoning_tokens);
+               cur.total += integer(message.total_tokens || (integer(message.input_tokens) + integer(message.cached_tokens) + integer(message.output_tokens) + integer(message.reasoning_tokens)));
+               if (message.model_id) cur.calls++;
               perDayModel.set(key, cur);
           }
             if (hasMessages && perDayModel.size) {
@@ -597,7 +601,8 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated
                 return normalizeSession({
                   ...base, provider: agg.provider, id, sourcePath: id,
                   model: agg.model, startedAt, endedAt,
-                  input: agg.input, cached: agg.cached, output: agg.output, reasoning: agg.reasoning, total: agg.total || agg.input+agg.cached+agg.output+agg.reasoning,
+                  durationSeconds: agg.firstAt != null && agg.lastAt != null ? Math.max(0, Math.round((Number(agg.lastAt) - Number(agg.firstAt)) / 1000)) : 0,
+                   input: agg.input, cached: agg.cached, output: agg.output, reasoning: agg.reasoning, total: agg.total || agg.input+agg.cached+agg.output+agg.reasoning, modelCalls: agg.calls,
                 });
               });
             }

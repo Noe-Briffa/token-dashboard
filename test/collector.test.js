@@ -174,11 +174,12 @@ test('worker preserves the shared session contract after JSON round-trip', () =>
 test('rebuilds OpenCode projection and reports source sessions separately from segments', () => {
   const directory = temp(), sourceFile = path.join(directory, 'opencode.db'), target = openDatabase(path.join(directory, 'usage.sqlite'));
   const source = new DatabaseSync(sourceFile);
-  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); CREATE TABLE message (session_id TEXT, data TEXT); INSERT INTO session VALUES ('live','p1',NULL,'C:/demo','build','{"id":"gpt-5.6-luna","providerID":"openai"}',0,0,0,0,0,0,0); INSERT INTO session VALUES ('child','p1','live','C:/demo','explore','{"id":"gpt-5.6-luna","providerID":"openai"}',0,0,0,0,0,0,0);`);
+  source.exec(`CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); CREATE TABLE message (session_id TEXT, data TEXT); INSERT INTO session VALUES ('live','p1',NULL,'C:/demo','build','{"id":"gpt-5.6-luna","providerID":"openai"}',0,0,86400000,0,0,0,0); INSERT INTO session VALUES ('child','p1','live','C:/demo','explore','{"id":"gpt-5.6-luna","providerID":"openai"}',0,0,0,0,0,0,0);`);
   const message = (modelID, created, total) => JSON.stringify({ modelID, time: { created }, tokens: { input: total, output: 0, reasoning: 0, cache: { read: 0 } } });
   source.exec("INSERT INTO project VALUES ('p1','Demo')");
-  source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('live', message('gpt-5.6-luna', Date.parse('2026-09-17T10:00:00Z'), 100));
-  source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('live', message('gpt-5.6-sol', Date.parse('2026-09-18T10:00:00Z'), 200));
+   source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('live', message('gpt-5.6-luna', Date.parse('2026-09-17T10:00:00Z'), 100));
+   source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('live', JSON.stringify({ modelID: 'gpt-5.6-luna', time: { created: Date.parse('2026-09-17T10:05:00Z') } }));
+   source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('live', message('gpt-5.6-sol', Date.parse('2026-09-18T10:00:00Z'), 200));
   source.close();
   importSessions(target, [{ platform: 'opencode', agent: 'OpenCode', id: 'opencode:deleted', sourcePath: 'deleted', input: 999, total: 999 }]);
   const result = collectOpenCode(target, { file: sourceFile });
@@ -191,6 +192,11 @@ test('rebuilds OpenCode projection and reports source sessions separately from s
     { model: 'gpt-5.6-luna', total_tokens: 100 },
     { model: 'gpt-5.6-sol', total_tokens: 200 },
   ]);
+   assert.deepEqual(target.prepare("SELECT model, model_calls, duration_seconds FROM sessions WHERE platform='opencode' ORDER BY model, duration_seconds").all().map((row) => ({ ...row })), [
+     { model: 'gpt-5.6-luna', model_calls: 0, duration_seconds: 0 },
+     { model: 'gpt-5.6-luna', model_calls: 2, duration_seconds: 300 },
+     { model: 'gpt-5.6-sol', model_calls: 1, duration_seconds: 0 },
+   ]);
   target.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
 

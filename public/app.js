@@ -136,6 +136,8 @@ function filterQuery() {
   if ($('#period').value !== 'custom') query.set('period', $('#period').value);
   const activityRange = selectedActivityRange();
   query.set('activityFrom', activityRange.start); query.set('activityTo', activityRange.end);
+  const agentsRange = selectedAgentsRange();
+  query.set('agentsFrom', agentsRange.start); query.set('agentsTo', agentsRange.end);
   return query;
 }
 const dateOnly = (date) => date.toISOString().slice(0, 10);
@@ -162,6 +164,18 @@ function renderActivityControls(range) {
   if ($('#activity-range')) $('#activity-range').textContent = `${formatActivityDate(selected.start)} → ${formatActivityDate(selected.end)}`;
   if ($('#activity-next')) $('#activity-next').disabled = selected.start >= current.start;
   if ($('#activity-current')) $('#activity-current').disabled = selected.start === current.start;
+}
+const agentsPreferenceKey = 'usage-monitor-agents-week';
+const readAgentsWeek = () => { try { const value = sessionStorage.getItem(agentsPreferenceKey); return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : null; } catch { return null; } };
+let agentsWeekStart = readAgentsWeek() || currentActivityWeek().start;
+let agentsFollowCurrent = !readAgentsWeek();
+function saveAgentsWeek() { try { agentsFollowCurrent ? sessionStorage.removeItem(agentsPreferenceKey) : sessionStorage.setItem(agentsPreferenceKey, agentsWeekStart); } catch {} }
+function selectedAgentsRange() { return { start: agentsWeekStart, end: addDays(agentsWeekStart, 6) }; }
+function renderAgentsControls(range) {
+  const current = currentActivityWeek(), selected = range || selectedAgentsRange();
+  if ($('#agents-range')) $('#agents-range').textContent = `${formatActivityDate(selected.start)} → ${formatActivityDate(selected.end)}`;
+  if ($('#agents-next')) $('#agents-next').disabled = selected.start >= current.start;
+  if ($('#agents-current')) $('#agents-current').disabled = selected.start === current.start;
 }
 function renderDonut(id, totalId, rows, target) {
   const minimum = tokenThreshold();
@@ -560,7 +574,7 @@ function render(data) {
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
   $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
-  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAgentDaily(data.agentDaily, data.range); renderSkillDaily(data.skillDaily, data.range, data.skillSource || data.skillStatus); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
+  renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAgentDaily(data.agentDaily, data.agentRange || data.range); renderAgentsControls(data.agentRange); renderSkillDaily(data.skillDaily, data.range, data.skillSource || data.skillStatus); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 let loadVersion = 0;
 let refreshPromise = null;
@@ -615,6 +629,7 @@ function requestRefresh() {
 async function load(refresh = false) {
   const version = ++loadVersion;
   if (activityFollowsCurrent) activityWeekStart = currentActivityWeek().start;
+  if (agentsFollowCurrent) agentsWeekStart = currentActivityWeek().start;
   let refreshResult = null;
   try {
     if (refresh) {
@@ -637,6 +652,7 @@ async function load(refresh = false) {
 async function loadActivityWeek() {
   const version = ++loadVersion;
   if (activityFollowsCurrent) activityWeekStart = currentActivityWeek().start;
+  if (agentsFollowCurrent) agentsWeekStart = currentActivityWeek().start;
   try {
     const dataResponse = await fetch(`/api/data?${filterQuery()}`);
     if (!dataResponse.ok) throw new Error('Données indisponibles');
@@ -675,6 +691,9 @@ $('#refresh').onclick = () => {
 $('#activity-prev').onclick = () => { activityWeekStart = addDays(activityWeekStart, -7); activityFollowsCurrent = false; saveActivityWeek(); loadActivityWeek(); };
 $('#activity-next').onclick = () => { const current = currentActivityWeek(); const next = addDays(activityWeekStart, 7); if (next <= current.start) { activityWeekStart = next; activityFollowsCurrent = next === current.start; saveActivityWeek(); loadActivityWeek(); } };
 $('#activity-current').onclick = () => { activityWeekStart = currentActivityWeek().start; activityFollowsCurrent = true; saveActivityWeek(); loadActivityWeek(); };
+$('#agents-prev').onclick = () => { agentsWeekStart = addDays(agentsWeekStart, -7); agentsFollowCurrent = false; saveAgentsWeek(); loadActivityWeek(); };
+$('#agents-next').onclick = () => { const current = currentActivityWeek(); const next = addDays(agentsWeekStart, 7); if (next <= current.start) { agentsWeekStart = next; agentsFollowCurrent = next === current.start; saveAgentsWeek(); loadActivityWeek(); } };
+$('#agents-current').onclick = () => { agentsWeekStart = currentActivityWeek().start; agentsFollowCurrent = true; saveAgentsWeek(); loadActivityWeek(); };
 window.addEventListener('scroll', () => {
   scrolling = true;
   clearTimeout(scrollTimer);

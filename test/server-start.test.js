@@ -13,13 +13,13 @@ test('serves the dashboard before the initial collection finishes', async () => 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-usage-server-'));
   const database = openDatabase(path.join(dataDir, 'usage.sqlite'));
   importSessions(database, [
-    { platform: 'opencode', agent: 'explore', id: 'opencode:session-1:gpt-test:2026-09-18:10', sourcePath: 'segment-1', startedAt: '2026-09-18T12:00:00.000Z', total: 10 },
-    { platform: 'opencode', agent: 'explore', id: 'opencode:session-1:gpt-test:2026-09-18:11', sourcePath: 'segment-2', startedAt: '2026-09-18T12:30:00.000Z', total: 10 },
-    { platform: 'opencode', agent: 'build', id: 'opencode:session-2', sourcePath: 'session-2', startedAt: '2026-09-19T12:00:00.000Z', total: 10 },
-    { platform: 'opencode', agent: 'general', id: 'opencode:session-3', sourcePath: 'session-3', startedAt: '2026-09-18T13:00:00.000Z', total: 10 },
-    { platform: 'opencode', agent: 'build', id: 'opencode:general-root', sourcePath: 'general-root', project: 'C:/Users/noebr', startedAt: '2026-09-18T14:00:00.000Z', total: 10 },
-    { platform: 'opencode', agent: 'build', id: 'opencode:general-child', sourcePath: 'general-child', project: 'C:\\Users\\noebr\\Documents\\Opencode\\demo', startedAt: '2026-09-18T15:00:00.000Z', total: 10 },
-    { platform: 'opencode', agent: 'build', id: 'opencode:other-project', sourcePath: 'other-project', project: 'C:/Users/noebr/Documents/Other', startedAt: '2026-09-18T16:00:00.000Z', total: 10 },
+    { platform: 'opencode', agent: 'explore', id: 'opencode:session-1:gpt-test:2026-09-18:10', sourcePath: 'segment-1', startedAt: '2026-09-18T12:00:00.000Z', endedAt: '2026-09-18T12:30:00.000Z', durationSeconds: 1800, modelCalls: 1, total: 10 },
+    { platform: 'opencode', agent: 'explore', id: 'opencode:session-1:gpt-test:2026-09-18:11', sourcePath: 'segment-2', startedAt: '2026-09-18T12:30:00.000Z', endedAt: '2026-09-18T13:00:00.000Z', durationSeconds: 1800, modelCalls: 2, total: 10 },
+    { platform: 'opencode', agent: 'build', id: 'opencode:session-2', sourcePath: 'session-2', startedAt: '2026-09-19T12:00:00.000Z', endedAt: '2026-09-19T12:20:00.000Z', durationSeconds: 1200, modelCalls: 1, total: 10 },
+    { platform: 'opencode', agent: 'general', id: 'opencode:session-3', sourcePath: 'session-3', startedAt: '2026-09-18T13:00:00.000Z', endedAt: '2026-09-18T14:00:00.000Z', durationSeconds: 3600, modelCalls: 1, total: 10 },
+    { platform: 'opencode', agent: 'build', id: 'opencode:general-root', sourcePath: 'general-root', project: 'C:/Users/noebr', startedAt: '2026-09-18T14:00:00.000Z', endedAt: '2026-09-18T14:30:00.000Z', durationSeconds: 1800, modelCalls: 1, total: 10 },
+    { platform: 'opencode', agent: 'build', id: 'opencode:general-child', sourcePath: 'general-child', project: 'C:\\Users\\noebr\\Documents\\Opencode\\demo', startedAt: '2026-09-18T14:15:00.000Z', endedAt: '2026-09-18T15:00:00.000Z', durationSeconds: 2700, modelCalls: 1, total: 10 },
+    { platform: 'opencode', agent: 'build', id: 'opencode:build-zero', sourcePath: 'build-zero', startedAt: '2026-09-18T15:30:00.000Z', endedAt: '2026-09-18T15:30:00.000Z', durationSeconds: 1318489, modelCalls: 0, total: 10 },
   ]);
   importOpenCodeSkillEvents(database, [
     { id: 'skill-1', day: '2026-09-18', skill: 'caveman', agent: 'plan', time_created: Date.parse('2026-09-18T14:00:00.000Z') },
@@ -58,9 +58,24 @@ test('serves the dashboard before the initial collection finishes', async () => 
     assert.equal(data.activity.length, 168);
     assert.equal(data.activity.every((cell) => Number.isInteger(cell.dayIndex) && cell.dayIndex >= 0 && cell.dayIndex < 7 && cell.hour >= 0 && cell.hour < 24), true);
     const agents = await (await fetch(url + '/api/data?from=2026-09-18&to=2026-09-19', { signal: AbortSignal.timeout(1000) })).json();
-    assert.deepEqual(agents.agentDaily, [
-      { day: '2026-09-18', agents: [{ agent: 'explore', sessions: 1 }] },
-      { day: '2026-09-19', agents: [] },
+    assert.equal(agents.agentDaily[0].workedSeconds, 10800);
+    assert.deepEqual(agents.agentDaily[0].agents, [
+      { agent: 'explore', system: false, calls: 3, workedSeconds: 3600 },
+      { agent: 'build', system: true, calls: 2, workedSeconds: 3600 },
+      { agent: 'general', system: true, calls: 1, workedSeconds: 3600 },
+    ]);
+    assert.deepEqual(agents.agentDaily[1].agents, [
+      { agent: 'build', system: true, calls: 1, workedSeconds: 1200 },
+    ]);
+    assert.equal(agents.agentDaily.reduce((sum, day) => sum + day.workedSeconds, 0), 12000);
+    const agentsWeek = await (await fetch(url + '/api/data?from=2026-09-01&to=2026-09-02&agentsFrom=2026-09-14&agentsTo=2026-09-20', { signal: AbortSignal.timeout(1000) })).json();
+    assert.deepEqual(agentsWeek.agentRange, { start: '2026-09-14', end: '2026-09-20' });
+    assert.equal(agentsWeek.agentDaily.length, 7);
+    assert.equal(agentsWeek.agentDaily.reduce((sum, day) => sum + day.workedSeconds, 0), 12000);
+    assert.deepEqual(agentsWeek.agentDaily[4].agents, [
+      { agent: 'explore', system: false, calls: 3, workedSeconds: 3600 },
+      { agent: 'build', system: true, calls: 2, workedSeconds: 3600 },
+      { agent: 'general', system: true, calls: 1, workedSeconds: 3600 },
     ]);
     assert.deepEqual(agents.skillDaily, [
       { day: '2026-09-18', skills: [{ skill: 'caveman', agent: 'build', activations: 1 }, { skill: 'caveman', agent: 'plan', activations: 1 }] },
