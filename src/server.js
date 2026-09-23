@@ -282,7 +282,7 @@ function data(query) {
   const platforms = db.prepare(`SELECT s.platform label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.platform ORDER BY total DESC`).all(...params);
   const projects = db.prepare(`SELECT COALESCE(s.project,'Projet inconnu') label, SUM(s.input_tokens+s.cached_input_tokens+s.output_tokens+s.reasoning_tokens) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY s.project ORDER BY total DESC`).all(...params);
   const options = db.prepare('SELECT DISTINCT platform, agent, model, project FROM sessions ORDER BY platform, agent, model').all();
-  const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
+  const pricing = db.prepare(`SELECT p.model, MIN(p.platform) platform, MIN(p.input_usd_per_million) input_usd_per_million, MIN(p.cached_input_usd_per_million) cached_input_usd_per_million, MIN(p.output_usd_per_million) output_usd_per_million, MIN(p.reasoning_usd_per_million) reasoning_usd_per_million, MIN(p.color) color, MAX(p.updated_at) updated_at FROM model_pricing p WHERE p.pricing_unit='per_1M_tokens' GROUP BY p.model ORDER BY p.model`).all();
   const sourceRows = db.prepare('SELECT platform, COUNT(*) sessions FROM sessions GROUP BY platform').all();
   const sources = [{ platform: 'codex', status: sourceState.codex.status || 'connected', sessions: sourceState.codex.sourceSessions ?? (sourceRows.find((row) => row.platform === 'codex')?.sessions || 0) }, { platform: 'opencode', status: sourceState.opencode.status, sessions: sourceState.opencode.sourceSessions ?? (sourceRows.find((row) => row.platform === 'opencode')?.sessions || 0) }];
   const skillSourceStateView = skillSource();
@@ -291,17 +291,21 @@ function data(query) {
 }
 function savePricing(body) {
   if (!Array.isArray(body.pricing)) throw new Error('Prix invalides');
-  const upsert = db.prepare(`INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, provider, pricing_unit, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(platform, model) DO UPDATE SET input_usd_per_million=excluded.input_usd_per_million, cached_input_usd_per_million=excluded.cached_input_usd_per_million, output_usd_per_million=excluded.output_usd_per_million, reasoning_usd_per_million=excluded.reasoning_usd_per_million, updated_at=excluded.updated_at`);
-  for (const row of body.pricing) {
+  const pricingRows = body.pricing.map((row) => {
     if (!row.platform || !row.model) throw new Error('Plateforme ou modèle manquant');
     const rates = ['input', 'cached', 'output', 'reasoning'].map((name) => Number(row[name]));
     if (rates.some((value) => !Number.isFinite(value) || value < 0)) throw new Error('Prix non valide');
+    if (row.color !== undefined && (typeof row.color !== 'string' || !/^#[\da-f]{6}$/i.test(row.color))) throw new Error('Couleur non valide');
+    return { ...row, rates, color: row.color?.toLowerCase() };
+  });
+  const upsert = db.prepare(`INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, provider, pricing_unit, color, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(platform, model) DO UPDATE SET input_usd_per_million=excluded.input_usd_per_million, cached_input_usd_per_million=excluded.cached_input_usd_per_million, output_usd_per_million=excluded.output_usd_per_million, reasoning_usd_per_million=excluded.reasoning_usd_per_million, color=excluded.color, updated_at=excluded.updated_at`);
+  for (const row of pricingRows) {
     const now = new Date().toISOString();
     for (const platform of ['codex','opencode']) {
-      const existing = db.prepare('SELECT provider, pricing_unit FROM model_pricing WHERE platform=? AND model=?').get(platform, row.model);
+      const existing = db.prepare('SELECT provider, pricing_unit, color FROM model_pricing WHERE platform=? AND model=?').get(platform, row.model);
       const provider = existing?.provider || 'openai';
       const unit = existing?.pricing_unit || 'per_1M_tokens';
-      upsert.run(platform, row.model, ...rates, provider, unit, now);
+      upsert.run(platform, row.model, ...row.rates, provider, unit, row.color ?? existing?.color ?? null, now);
     }
   }
   return { saved: body.pricing.length };

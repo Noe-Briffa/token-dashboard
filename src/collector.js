@@ -65,6 +65,7 @@ export function openDatabase(file) {
   if (!pricingCols.has('provider')) db.exec('ALTER TABLE model_pricing ADD COLUMN provider TEXT');
   if (!pricingCols.has('pricing_unit')) db.exec("ALTER TABLE model_pricing ADD COLUMN pricing_unit TEXT NOT NULL DEFAULT 'per_1M_tokens'");
   if (!pricingCols.has('per_minute_usd')) db.exec('ALTER TABLE model_pricing ADD COLUMN per_minute_usd REAL');
+  if (!pricingCols.has('color')) db.exec('ALTER TABLE model_pricing ADD COLUMN color TEXT');
   db.exec("DELETE FROM model_pricing WHERE platform='opencode' AND model LIKE '{%\"id\"%'");
   // seed / fix Muse Spark 1.2 Contributor: $0.10 in / $0.002 cached / $0.20 out (Contributor tier, Meta)
   try {

@@ -57,6 +57,20 @@ test('serves the dashboard before the initial collection finishes', async () => 
     assert.deepEqual(data.activityRange, { start: '2026-09-14', end: '2026-09-20' });
     assert.equal(data.activity.length, 168);
     assert.equal(data.activity.every((cell) => Number.isInteger(cell.dayIndex) && cell.dayIndex >= 0 && cell.dayIndex < 7 && cell.hour >= 0 && cell.hour < 24), true);
+    const saveColor = await fetch(url + '/api/pricing', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pricing: [{ platform: 'opencode', model: 'gpt-test', input: '0', cached: '0', output: '0', reasoning: '0', color: '#12abef' }] }),
+      signal: AbortSignal.timeout(1000),
+    });
+    assert.equal(saveColor.status, 200);
+    const legacySave = await fetch(url + '/api/pricing', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pricing: [{ platform: 'opencode', model: 'gpt-test', input: '0', cached: '0', output: '0', reasoning: '0' }] }),
+      signal: AbortSignal.timeout(1000),
+    });
+    assert.equal(legacySave.status, 200);
+    const savedPricing = await (await fetch(url + '/api/data?from=2026-09-18&to=2026-09-19', { signal: AbortSignal.timeout(1000) })).json();
+    assert.equal(savedPricing.pricing.find((row) => row.model === 'gpt-test').color, '#12abef');
     const agents = await (await fetch(url + '/api/data?from=2026-09-18&to=2026-09-19', { signal: AbortSignal.timeout(1000) })).json();
     assert.equal(agents.agentDaily[0].workedSeconds, 10800);
     assert.deepEqual(agents.agentDaily[0].agents, [

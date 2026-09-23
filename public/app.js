@@ -104,7 +104,8 @@ function makeColors(data) {
   const models = [...new Set(data.options.filter((row) => row.model).map((row) => row.model))].sort();
   const platforms = [...new Set(data.options.map((row) => row.platform))].filter(Boolean).sort();
   const projects = [...new Set(data.projects.map((row) => shortProject(row.label)))].sort();
-  modelColors = new Map(models.map((key) => [canonicalModel(key), modelColor(key)]));
+  const savedColors = new Map((data.pricing || []).filter((row) => row.color).map((row) => [canonicalModel(row.model), row.color]));
+  modelColors = new Map(models.map((key) => [canonicalModel(key), savedColors.get(canonicalModel(key)) || modelColor(key)]));
   platformColors = new Map(platforms.map((key, index) => [key, hue(index, platforms.length, 210)]));
   projectColors = new Map(projects.map((key, index) => [key, hue(index, projects.length, 280)]));
 }
@@ -112,6 +113,13 @@ function colorFor(row, kind = 'model') {
   if (kind === 'platform') return platformColors.get(row.label || row.platform) || '#70e1c8';
   if (kind === 'project') return projectColors.get(row.label) || '#70e1c8';
   return modelColors.get(canonicalModel(row.model || row.label)) || '#70e1c8';
+}
+function colorInputValue(color) {
+  const match = String(color || '').match(/^hsl\(\s*(\d+)\s+([\d.]+)%\s+([\d.]+)%\s*\)$/i);
+  if (!match) return /^#[\da-f]{6}$/i.test(color) ? color : '#70e1c8';
+  const h = Number(match[1]) / 360, s = Number(match[2]) / 100, l = Number(match[3]) / 100;
+  const hue = (n) => { const k = (n + h * 12) % 12; return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+  return `#${[hue(0), hue(8), hue(4)].map((channel) => Math.round(channel * 255).toString(16).padStart(2, '0')).join('')}`;
 }
 function mergeByModel(rows) {
   const merged = new Map();
@@ -237,8 +245,11 @@ function renderChart(days, range, pricing = []) {
   const isTokens = $('#metric').value === 'total';
   // bougies tokens : moins chers en bas (column-reverse => premier segment en bas)
   const inputPrice = new Map(pricing.map((row) => [row.model, Number(row.input_usd_per_million) || 0]));
+  const outputPrice = new Map(pricing.map((row) => [row.model, Number(row.output_usd_per_million) || 0]));
   const priceOf = (row) => inputPrice.get(row.model || row.label) ?? 0;
-  if (isTokens) days = days.map((day) => ({ ...day, series: [...day.series].sort((a, b) => priceOf(a) - priceOf(b)) }));
+  const outputOf = (row) => outputPrice.get(row.model || row.label) ?? 0;
+  const chartName = (row) => String(row.model || row.label || '');
+  if (isTokens) days = days.map((day) => ({ ...day, series: [...day.series].sort((a, b) => priceOf(a) - priceOf(b) || outputOf(a) - outputOf(b) || chartName(a).localeCompare(chartName(b))) }));
   const totals = days.map((day) => day.series.reduce((sum, row) => sum + value(row), 0));
   const rawMax = Math.max(...totals, 0), magnitude = 10 ** Math.floor(Math.log10(rawMax || 1));
   const max = Math.ceil(rawMax / magnitude * 4) / 4 * magnitude || 1;
@@ -254,8 +265,10 @@ function renderChart(days, range, pricing = []) {
     const rows = day.series.filter((row) => value(row) > 0);
      const apiRows = day.series.filter((row) => row.api_cost != null), apiTotal = apiRows.reduce((sum, row) => sum + Number(row.api_cost), 0);
      const tokenTotal = day.series.reduce((sum, row) => sum + Number(row.total || 0), 0);
-     const tipText = rows.map((row) => `${row.model}: ${formatted(value(row))}`).join('\n') || 'Aucune activité';
-     const tipRows = rows.map((row) => `<span class="tip-row"><i class="dot" style="background:${colorFor(row)}"></i><label>${escape(row.model || row.label)}</label><small>${escape(formatted(value(row)))}</small></span>`).join('') || '<span class="muted">Aucune activité</span>';
+     const tipName = (row) => String(row.model || row.label || '');
+      const tipOrdered = [...rows].sort((a, b) => priceOf(b) - priceOf(a) || outputOf(b) - outputOf(a) || tipName(a).localeCompare(tipName(b)));
+     const tipText = tipOrdered.map((row) => `${row.model}: ${formatted(value(row))}`).join('\n') || 'Aucune activité';
+     const tipRows = tipOrdered.map((row) => `<span class="tip-row"><i class="dot" style="background:${colorFor(row)}"></i><label>${escape(row.model || row.label)}</label><small>${escape(formatted(value(row)))}</small></span>`).join('') || '<span class="muted">Aucune activité</span>';
      const tipFoot = `${isTokens && tokenTotal ? `<span class="tip-foot">Total : ${escape(compact.format(tokenTotal))}</span>` : ''}${isTokens && apiRows.length ? `<span class="tip-foot">Estimation API : ${escape(money.format(apiTotal))}</span>` : ''}`;
      barTips.push(`<b class="tip-day">${escape(day.day)}</b>${tipRows}${tipFoot}`);
      const height = totals[index] / max * 100, showLabel = index % labelStep === 0 || index === days.length - 1;
@@ -431,7 +444,7 @@ function renderAdtention(balance) {
   el.innerHTML = `<span><b>Gains ADtention</b>${note ? `<small>${note}</small>` : ''}</span><strong>${money.format(Number(balance.balanceUsd) || 0)}</strong>`;
 }
 function renderPricing(rows) {
-  $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td>${escape(row.platform)}</td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="text" inputmode="decimal" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
+  $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td><input class="model-color" type="color" name="color" value="${colorInputValue(row.color || modelColor(row.model))}" aria-label="Couleur de ${escape(row.model)}"></td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="text" inputmode="decimal" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
 }
 const resetLabel = (iso) => {
   if (!iso) return 'reset inconnu';
@@ -743,7 +756,7 @@ $('#pricing-rows').addEventListener('focusout', (event) => { if (event.target.ma
 $('#pricing').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.submitter || $('#pricing button'), feedback = $('#pricing-feedback');
-  const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) }));
+  const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, color: row.querySelector('[name="color"]').value, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) }));
   button.disabled = true; button.textContent = 'Enregistrement…'; feedback.textContent = 'Mise à jour en cours'; feedback.classList.add('visible');
   try {
     const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) });
