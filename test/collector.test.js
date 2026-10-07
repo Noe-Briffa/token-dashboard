@@ -93,11 +93,11 @@ test('preserves missing reported cost while retaining a real free cost', () => {
 test('stored price changes computed cost without changing session data', () => {
   const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
   importSessions(db, [{ platform: 'codex', agent: 'Codex CLI', id: 'cost-1', sourcePath: 'session', model: 'gpt-test', input: 100, cached: 50, output: 20, reasoning: 10, total: 130 }]);
-  const query = `SELECT CASE WHEN p.model IS NOT NULL THEN (s.input_tokens*p.input_usd_per_million+s.cached_input_tokens*p.cached_input_usd_per_million+s.output_tokens*p.output_usd_per_million+s.reasoning_tokens*p.reasoning_usd_per_million)/1000000.0 END cost FROM sessions s LEFT JOIN model_pricing p ON p.platform=s.platform AND p.model=s.model WHERE s.id='cost-1'`;
+  const query = `SELECT CASE WHEN p.model IS NOT NULL THEN ((CASE WHEN s.platform='codex' THEN MAX(s.input_tokens-s.cached_input_tokens,0) ELSE s.input_tokens END*p.input_usd_per_million)+s.cached_input_tokens*p.cached_input_usd_per_million+s.output_tokens*p.output_usd_per_million+s.reasoning_tokens*p.reasoning_usd_per_million)/1000000.0 END cost FROM sessions s LEFT JOIN model_pricing p ON p.platform=s.platform AND p.model=s.model WHERE s.id='cost-1'`;
   assert.equal(db.prepare(query).get().cost, 0); // auto-ligne prix à 0 jusqu'à saisie
   const price = db.prepare("INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(platform, model) DO UPDATE SET input_usd_per_million=excluded.input_usd_per_million, cached_input_usd_per_million=excluded.cached_input_usd_per_million, output_usd_per_million=excluded.output_usd_per_million, reasoning_usd_per_million=excluded.reasoning_usd_per_million, updated_at=excluded.updated_at");
-  price.run('codex', 'gpt-test', 1, 0.5, 2, 2, 'now'); assert.equal(db.prepare(query).get().cost, 0.000185);
-  db.prepare('UPDATE model_pricing SET output_usd_per_million=4').run(); assert.equal(db.prepare(query).get().cost, 0.000225);
+  price.run('codex', 'gpt-test', 1, 0.5, 2, 2, 'now'); assert.equal(db.prepare(query).get().cost, 0.000135); // (100-50)*1 + 50*0.5 + 20*2 + 10*2
+  db.prepare('UPDATE model_pricing SET output_usd_per_million=4').run(); assert.equal(db.prepare(query).get().cost, 0.000175);
   assert.equal(db.prepare("SELECT total_tokens FROM sessions WHERE id='cost-1'").get().total_tokens, 130);
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
@@ -155,6 +155,174 @@ test('counts completed OpenCode skill activations by Paris day', () => {
   ]);
 });
 
+test('splits reported cost pro-rata instead of duplicating it per segment', () => {
+  const directory = temp(), sourceFile = path.join(directory, 'opencode.db'), target = openDatabase(path.join(directory, 'usage.sqlite'));
+  const source = new DatabaseSync(sourceFile);
+  source.exec("CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER); CREATE TABLE message (session_id TEXT, data TEXT); INSERT INTO project VALUES ('p1','Demo'); INSERT INTO session VALUES ('s9','p1',NULL,'C:/demo','build','{\"id\":\"m\",\"providerID\":\"openai\"}',1.0,1000,61000,0,0,0,0);");
+  const msg = (model, created, input) => JSON.stringify({ modelID: model, providerID: 'openai', time: { created }, tokens: { input, output: 0, reasoning: 0, cache: { read: 0 }, total: input } });
+  source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('s9', msg('m-a', Date.parse('2026-09-21T08:00:00Z'), 100));
+  source.prepare('INSERT INTO message (session_id, data) VALUES (?, ?)').run('s9', msg('m-b', Date.parse('2026-09-21T09:00:00Z'), 300));
+  source.close();
+  const result = collectOpenCode(target, { file: sourceFile });
+  assert.equal(result.status, 'connected');
+  const rows = target.prepare("SELECT model, input_tokens, reported_cost_usd FROM sessions WHERE id LIKE 'opencode:s9:%' ORDER BY model").all();
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].reported_cost_usd, 0.25);
+  assert.equal(rows[1].reported_cost_usd, 0.75);
+  assert.equal(target.prepare("SELECT SUM(reported_cost_usd) n FROM sessions WHERE id LIKE 'opencode:s9:%'").get().n, 1.0);
+  target.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('seeds family pricing for new matching models without touching user prices', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  importSessions(db, [{ platform: 'codex', agent: 'Test', id: 'fam-1', sourcePath: 'fam-1', model: 'muse-spark-9-test', input: 10, cached: 0, output: 5, reasoning: 0, total: 15 }]);
+  const seeded = db.prepare("SELECT input_usd_per_million, cached_input_usd_per_million, output_usd_per_million FROM model_pricing WHERE platform='codex' AND model='muse-spark-9-test'").get();
+  assert.deepEqual({ ...seeded }, { input_usd_per_million: 0.1, cached_input_usd_per_million: 0.002, output_usd_per_million: 0.2 });
+  db.prepare("UPDATE model_pricing SET input_usd_per_million=9 WHERE platform='codex' AND model='muse-spark-9-test'").run();
+  importSessions(db, [{ platform: 'codex', agent: 'Test', id: 'fam-2', sourcePath: 'fam-2', model: 'muse-spark-9-test', input: 1, cached: 0, output: 1, reasoning: 0, total: 2 }]);
+  assert.equal(db.prepare("SELECT input_usd_per_million n FROM model_pricing WHERE platform='codex' AND model='muse-spark-9-test'").get().n, 9);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('computes net token totals per platform without double-counting cache', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  importSessions(db, [
+    { platform: 'codex', agent: 'Codex CLI', id: 'net-1', sourcePath: 'net-1', model: 'gpt-x', input: 100, cached: 60, output: 20, reasoning: 10, total: 130 },
+    { platform: 'opencode', agent: 'OpenCode', id: 'net-2', sourcePath: 'net-2', model: 'gpt-x', input: 100, cached: 75, output: 25, reasoning: 15, total: 215 },
+  ]);
+  const total = `(CASE WHEN s.platform='codex' THEN s.input_tokens + s.output_tokens + s.reasoning_tokens ELSE s.input_tokens + s.cached_input_tokens + s.output_tokens + s.reasoning_tokens END)`;
+  const rows = db.prepare(`SELECT s.platform platform, SUM(${total}) t FROM sessions s GROUP BY s.platform ORDER BY s.platform`).all();
+  assert.deepEqual(rows.map((r) => ({ ...r })), [{ platform: 'codex', t: 130 }, { platform: 'opencode', t: 215 }]);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('flags zero-priced rows as missing prices but stays silent with real prices or reported cost', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const price = db.prepare("INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, cache_writes_usd_per_million, per_minute_usd, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(platform, model) DO UPDATE SET input_usd_per_million=excluded.input_usd_per_million, cached_input_usd_per_million=excluded.cached_input_usd_per_million, output_usd_per_million=excluded.output_usd_per_million, reasoning_usd_per_million=excluded.reasoning_usd_per_million, cache_writes_usd_per_million=excluded.cache_writes_usd_per_million, per_minute_usd=excluded.per_minute_usd, updated_at=excluded.updated_at");
+  price.run('opencode', 'free-x', 0, 0, 0, 0, 0, 0, 'now');
+  price.run('opencode', 'paid-x', 1, 1, 1, 1, 0, 0, 'now');
+  importSessions(db, [
+    { platform: 'opencode', agent: 'OpenCode', id: 'm-1', sourcePath: 'm-1', model: 'free-x', input: 10, cached: 0, output: 5, reasoning: 0, total: 15 },
+    { platform: 'opencode', agent: 'OpenCode', id: 'm-2', sourcePath: 'm-2', model: 'paid-x', input: 10, cached: 0, output: 5, reasoning: 0, total: 15 },
+    { platform: 'opencode', agent: 'OpenCode', id: 'm-3', sourcePath: 'm-3', model: 'free-x', input: 7, cached: 0, output: 0, reasoning: 0, total: 7, reportedCost: 0.5 },
+  ]);
+  const cond = `(COALESCE(s.reported_cost_usd,0)=0 AND (p.model IS NULL OR (COALESCE(p.input_usd_per_million,0)=0 AND COALESCE(p.cached_input_usd_per_million,0)=0 AND COALESCE(p.output_usd_per_million,0)=0 AND COALESCE(p.reasoning_usd_per_million,0)=0 AND COALESCE(p.cache_writes_usd_per_million,0)=0 AND COALESCE(p.per_minute_usd,0)=0)))`;
+  const total = `(CASE WHEN s.platform='codex' THEN s.input_tokens + s.output_tokens + s.reasoning_tokens ELSE s.input_tokens + s.cached_input_tokens + s.output_tokens + s.reasoning_tokens END)`;
+  const row = db.prepare(`SELECT COALESCE(SUM(CASE WHEN ${cond} THEN ${total} ELSE 0 END),0) t, COUNT(DISTINCT CASE WHEN ${cond} THEN s.platform || '__' || COALESCE(s.model,'') END) m FROM sessions s LEFT JOIN model_pricing p ON p.platform=s.platform AND p.model=s.model`).get();
+  assert.equal(row.t, 15); // seule m-1 : m-2 tarifee, m-3 avec reporte
+  assert.equal(row.m, 1);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+test('excludes empty rows from session counts while keeping their reported cost', () => {
+  const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
+  importSessions(db, [
+    { platform: 'opencode', agent: 'OpenCode', id: 'e-1', sourcePath: 'e-1', model: 'm', input: 10, cached: 0, output: 5, reasoning: 0, total: 15 },
+    { platform: 'opencode', agent: 'OpenCode', id: 'e-2', sourcePath: 'e-2', model: 'm', input: 0, cached: 0, output: 0, reasoning: 0, total: 0 },
+    { platform: 'opencode', agent: 'OpenCode', id: 'e-3', sourcePath: 'e-3', model: 'm', input: 0, cached: 0, output: 0, reasoning: 0, total: 0, reportedCost: 0.5 },
+  ]);
+  const nonempty = `(NOT (COALESCE(s.input_tokens,0)=0 AND COALESCE(s.cached_input_tokens,0)=0 AND COALESCE(s.output_tokens,0)=0 AND COALESCE(s.reasoning_tokens,0)=0 AND COALESCE(s.total_tokens,0)=0 AND COALESCE(s.reported_cost_usd,0)=0))`;
+  const row = db.prepare(`SELECT SUM(CASE WHEN ${nonempty} THEN 1 ELSE 0 END) sessions, SUM(COALESCE(NULLIF(s.reported_cost_usd,0),0)) cost FROM sessions s`).get();
+  assert.equal(row.sessions, 2); // e-1 et e-3 (cout reporte), e-2 exclue
+  assert.equal(row.cost, 0.5);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('shows one pricing row per platform with a visible platform column', () => {
+  const html = fs.readFileSync(path.resolve('public/index.html'), 'utf8');
+  assert.ok(html.includes('<th>Plateforme</th>'));
+  const app = fs.readFileSync(path.resolve('public/app.js'), 'utf8');
+  assert.ok(app.includes('<td class="muted">${escape(row.platform)}</td>'));
+});
+
+test('rejects cross-origin posts while allowing loopback callers', async () => {
+  const directory = temp();
+  process.env.AI_USAGE_DATA_DIR = directory;
+  process.env.AI_USAGE_LEGACY_DATA_DIR = path.join(directory, 'legacy-missing');
+  const { isAllowedPost, startServer, stopServer } = await import('../src/server.js?p1origin=1');
+  await startServer({ port: 0 });
+  try {
+    assert.equal(isAllowedPost({ headers: {}, method: 'POST' }), true);
+    assert.equal(isAllowedPost({ headers: { host: '127.0.0.1:5123' }, method: 'POST' }), true);
+    assert.equal(isAllowedPost({ headers: { host: '127.0.0.1:5123', origin: 'http://127.0.0.1:5123' }, method: 'POST' }), true);
+    assert.equal(isAllowedPost({ headers: { host: '127.0.0.1:5123', origin: 'https://evil.example' }, method: 'POST' }), false);
+    assert.equal(isAllowedPost({ headers: { host: '192.168.1.9' }, method: 'POST' }), false);
+  } finally {
+    await stopServer().catch(() => {});
+    delete process.env.AI_USAGE_DATA_DIR;
+    delete process.env.AI_USAGE_LEGACY_DATA_DIR;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('marks unattributed codex buckets as uncertain instead of guessing the model', () => {
+  const directory = temp(), file = path.join(directory, 'rollout-uncertain.jsonl');
+  const usage = (input, at) => ({ timestamp: at, type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: input } } } });
+  const rows = [
+    { timestamp: '2026-09-17T10:00:00Z', type: 'session_meta', payload: { session_id: 'unc-1', timestamp: '2026-09-17T10:00:00Z', cwd: 'C:/x', originator: 'Codex CLI' } },
+    usage(0, '2026-09-17T10:01:00Z'), usage(100, '2026-09-17T10:02:00Z'),
+  ];
+  fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
+  const parsed = parseCodexSession(file);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].model, 'Modèle incertain');
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('resumes restarted counters as fresh input instead of dropping the snapshot', () => {
+  const directory = temp(), root = path.join(directory, 'sessions'); fs.mkdirSync(root, { recursive: true });
+  const usage = (total, at) => ({ timestamp: at, type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: total, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: total } } } });
+  const rows = [
+    { timestamp: '2026-09-17T10:00:00Z', type: 'session_meta', payload: { session_id: 'rst-1', timestamp: '2026-09-17T10:00:00Z', cwd: 'C:/x', originator: 'Codex CLI' } },
+    { timestamp: '2026-09-17T10:00:00Z', type: 'turn_context', payload: { model: 'gpt-test' } },
+    usage(0, '2026-09-17T10:01:00Z'), usage(100, '2026-09-17T11:00:00Z'), usage(50, '2026-09-17T12:00:00Z'), usage(120, '2026-09-17T13:00:00Z'),
+  ];
+  fs.writeFileSync(path.join(root, 'rollout-rst.jsonl'), rows.map(JSON.stringify).join('\n'));
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  collectCodex(db, { root });
+  assert.equal(db.prepare("SELECT SUM(total_tokens) n FROM sessions WHERE platform='codex'").get().n, 220); // 100 + 50 + 70, reprise sans perte
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('clamps future timestamps to now when normalizing sessions', () => {
+  const future = new Date(Date.now() + 3600000).toISOString();
+  const row = normalizeSession({ platform: 'codex', agent: 'Codex CLI', id: 'fut-1', sourcePath: 'fut-1', startedAt: future, endedAt: future });
+  assert.ok(Date.parse(row.startedAt) <= Date.now());
+  assert.ok(Date.parse(row.endedAt) <= Date.now());
+  const past = normalizeSession({ platform: 'codex', agent: 'Codex CLI', id: 'past-1', sourcePath: 'past-1', startedAt: '2026-01-01T00:00:00.000Z', endedAt: '2026-01-01T00:00:00.000Z' });
+  assert.equal(past.startedAt, '2026-01-01T00:00:00.000Z');
+});
+
+test('exposes settings and source freshness through data with a working subscription toggle', async () => {
+  const directory = temp();
+  process.env.AI_USAGE_DATA_DIR = directory;
+  process.env.AI_USAGE_LEGACY_DATA_DIR = path.join(directory, 'legacy-missing');
+  const srv = await import('../src/server.js?p2settings=1');
+  await srv.startServer({ port: 0 });
+  try {
+    const { DatabaseSync: Sync } = await import('node:sqlite');
+    const target = new Sync(path.join(directory, 'usage.sqlite'));
+    importSessions(target, [{ platform: 'codex', agent: 'Codex CLI', id: 'tog-1', sourcePath: 'tog-1', model: 'gpt-test', startedAt: '2026-06-01T10:00:00.000Z', endedAt: '2026-06-01T10:01:00.000Z', input: 100, cached: 0, output: 10, reasoning: 0, total: 110 }]);
+    target.prepare("UPDATE model_pricing SET input_usd_per_million=2, output_usd_per_million=4 WHERE platform='codex' AND model='gpt-test'").run();
+    target.close();
+    const params = new URLSearchParams({ from: '2026-01-01', to: '2026-12-31' });
+    const before = srv.data(params);
+    assert.equal(before.settings.openai_subscription, true); // défaut historique
+    assert.ok(Array.isArray(before.sources) && before.sources.every((s) => 'lastRefreshAt' in s));
+    assert.equal(before.summary.paid_cost, 0); // codex couvert par abonnement
+    assert.equal(before.summary.api_cost, 0.00024); // (100*2 + 10*4) / 1M
+    const saved = srv.saveSettings({ openai_subscription: false });
+    assert.equal(saved.openai_subscription, false);
+    const after = srv.data(params);
+    assert.equal(after.settings.openai_subscription, false);
+    assert.equal(after.summary.paid_cost, after.summary.api_cost);
+    assert.equal(after.summary.paid_cost, 0.00024);
+    assert.throws(() => srv.saveSettings(null), /Réglages invalides/);
+  } finally {
+    await srv.stopServer().catch(() => {});
+    delete process.env.AI_USAGE_DATA_DIR;
+    delete process.env.AI_USAGE_LEGACY_DATA_DIR;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 test('worker preserves the shared session contract after JSON round-trip', () => {
   const directory = temp(), sourceFile = path.join(directory, 'opencode.db');
   const source = new DatabaseSync(sourceFile);

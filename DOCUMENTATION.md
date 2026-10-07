@@ -405,7 +405,7 @@ Cette table contient la projection normalisée des sources.
 | `cached_input_tokens` | Tokens d'entrée servis par le cache. |
 | `output_tokens` | Tokens de sortie. |
 | `reasoning_tokens` | Tokens de raisonnement. |
-| `total_tokens` | Total normalisé. |
+| `total_tokens` | Total normalisé, écrit mais non lu par les agrégats (legacy conservé pour compatibilité). |
 | `estimated_cost_usd` | Ancienne colonne conservée par compatibilité de schéma. |
 | `reported_cost_usd` | Coût rapporté par la source lorsqu'il existe. |
 | `updated_at` | Heure de mise à jour de la projection. |
@@ -475,6 +475,7 @@ Les contrôles disponibles sont :
 
 - métrique : `Tokens` ou `Coût` ;
 - mode de coût : `Estimation API` ou `Coût payé` ;
+- abonnement : interrupteur `Abonnement` ; actif par défaut, il met à zéro le coût payé des usages couverts sans réimporter ;
 - période : 7, 14, 30, 90, 180 ou 365 derniers jours ;
 - période personnalisée avec date de début et date de fin ;
 - seuil minimum de tokens en millions.
@@ -489,7 +490,7 @@ Les filtres plateforme, agent, modèle et projet existent dans le code et peuven
 
 Le bandeau de métriques affiche :
 
-- nombre de sessions sur la période ;
+- nombre de sessions sur la période (hors lignes sans tokens ni coût rapporté) ;
 - total de tokens ;
 - taux de prompt cache, séparé entre Codex et OpenCode ;
 - modèle principal ;
@@ -611,11 +612,15 @@ La section repliable `Prix des modèles` permet de saisir, en USD par million de
 - input ;
 - cache ;
 - output ;
-- reasoning.
+- reasoning ;
+- écriture cache (`cache_write`) ;
+- coût à la minute (`per_minute`, informatif).
 
 Les tarifs sont enregistrés dans SQLite. Modifier les prix recalcule les coûts sans réimporter les sessions.
 
-Les nouveaux modèles détectés sont ajoutés automatiquement avec des prix nuls. Cela évite de bloquer l'import, mais le coût reste nul ou incomplet jusqu'à la saisie des tarifs.
+Les nouveaux modèles détectés sont ajoutés automatiquement avec des prix nuls. Cela évite de bloquer l'import, mais ces lignes valent prix manquant : le dashboard signale leurs tokens et leur nombre jusqu'à la saisie des tarifs ou la présence d'un coût rapporté.
+
+Les deltas Codex sans modèle prouvé (ni contexte de tour, ni modèle de session, ni modèle unique) sont attribués à `Modèle incertain`, une ligne filtrable exclue du top modèle.
 
 ### Sources
 
@@ -623,7 +628,8 @@ La section `Sources` affiche pour chaque plateforme :
 
 - un indicateur de connexion ;
 - le nom de la plateforme ;
-- le nombre de sessions lorsqu'elle est connectée.
+- le nombre de sessions lorsqu'elle est connectée (hors lignes sans tokens ni coût rapporté) ;
+- l'ancienneté de la dernière collecte réussie, y compris quand la source décroche et que les lignes conservées s'affichent.
 
 OpenCode peut être non connecté sans empêcher l'affichage des données Codex.
 
@@ -832,7 +838,9 @@ Corps attendu :
       "input": "1.25",
       "cached": "0.125",
       "output": "5",
-      "reasoning": "5"
+      "reasoning": "5",
+      "cache_write": "0",
+      "per_minute": "0"
     }
   ]
 }
@@ -896,27 +904,29 @@ Les exceptions serveur sont renvoyées en JSON avec HTTP `400` :
 
 ### Estimation API
 
-La formule générale est :
+La formule dépend de la plateforme, car Codex compte les tokens cache dans `input_tokens` alors qu'OpenCode les compte à part :
 
 ```text
-(
-  input_tokens * prix_input
+Codex : ((input_tokens - cached_input_tokens) * prix_input
   + cached_input_tokens * prix_cache
   + output_tokens * prix_output
-  + reasoning_tokens * prix_reasoning
-) / 1 000 000
+  + reasoning_tokens * prix_reasoning) / 1 000 000
+OpenCode : (input_tokens * prix_input
+  + cached_input_tokens * prix_cache
+  + output_tokens * prix_output
+  + reasoning_tokens * prix_reasoning) / 1 000 000
 ```
 
-Les prix sont stockés en USD par million de tokens.
+Les prix sont stockés en USD par million de tokens. Le total tokens suit la même logique : côté Codex le cache est exclu du total car déjà contenu dans l'entrée.
 
-Si aucun prix n'est défini, la valeur correspondante vaut zéro. L'interface affiche alors une indication de prix manquant selon le contexte.
+Si aucun prix n'est défini, la valeur correspondante vaut zéro. Une ligne tarifée entièrement à zéro vaut prix manquant : l'interface signale les tokens et modèles concernés.
 
 ### Coût payé
 
 Lorsque le réglage d'abonnement est actif :
 
-- les sessions Codex sont considérées comme couvertes ;
-- les sessions OpenCode utilisant un modèle OpenAI reconnu sont considérées comme couvertes ;
+- les sessions Codex portées par le fournisseur OpenAI (ou un modèle OpenAI reconnu) sont considérées comme couvertes ;
+- les sessions OpenCode portant un modèle OpenAI reconnu avec fournisseur OpenAI sont considérées comme couvertes ;
 - les autres sessions utilisent l'estimation tarifaire.
 
 Le dashboard permet donc de comparer le coût théorique API avec le coût effectivement attribué à l'utilisateur.
@@ -933,7 +943,7 @@ Ce calcul dépend des prix saisis et ne constitue pas une facture officielle.
 
 ### Coût rapporté par OpenCode
 
-OpenCode peut fournir un coût rapporté dans sa base source. Il est conservé dans `reported_cost_usd` lors de l'import. Les agrégations principales du dashboard utilisent cependant les formules de tarification locale afin de garder les modes API et payé cohérents avec les prix configurés.
+OpenCode peut fournir un coût rapporté dans sa base source. Il est conservé dans `reported_cost_usd` lors de l'import, ventilé au prorata des tokens entre les segments jour/modèle. Le coût affiché utilise ce reporté quand il est non nul (0 et NULL valent pas d'info), sinon l'estimation tarifaire locale. Les ventilations par type de token suivent la même priorité au prorata de l'estimation.
 
 ## 13. Limites, sécurité et confidentialité
 
@@ -964,7 +974,7 @@ Le token est lu depuis le fichier d'authentification local et placé dans l'en-t
 ### Limites de sécurité
 
 - le serveur n'a pas de système d'authentification ;
-- la protection repose sur l'écoute loopback ;
+- la protection repose sur l'écoute loopback, et les requêtes POST exigent en plus un en-tête `Host` ou `Origin` loopback (retour `403` sinon) ;
 - les corps JSON n'ont pas de limite de taille explicite ;
 - l'endpoint de mise à jour peut exécuter `git pull` dans le répertoire du projet ;
 - si le serveur est modifié pour écouter sur une adresse réseau, une authentification devra être ajoutée avant toute exposition.
@@ -1114,7 +1124,7 @@ Les lignes invalides sont ignorées silencieusement. Le reste du fichier peut do
 
 ### Prix manquants
 
-Un modèle nouvellement découvert reçoit automatiquement des prix nuls. Cela protège la collecte mais donne un coût incomplet tant que la tarification n'est pas saisie.
+Un modèle nouvellement découvert reçoit automatiquement des prix nuls. Une ligne entièrement à zéro vaut prix manquant : le dashboard signale le volume de tokens et le nombre de modèles concernés tant qu'aucun tarif n'est saisi et qu'aucun coût n'est rapporté.
 
 ### Données locales non synchronisées
 

@@ -246,10 +246,12 @@ function renderChart(days, range, pricing = []) {
   // bougies tokens : moins chers en bas (column-reverse => premier segment en bas)
   const inputPrice = new Map(pricing.map((row) => [row.model, Number(row.input_usd_per_million) || 0]));
   const outputPrice = new Map(pricing.map((row) => [row.model, Number(row.output_usd_per_million) || 0]));
+  const cachedPrice = new Map(pricing.map((row) => [row.model, Number(row.cached_input_usd_per_million) || 0]));
   const priceOf = (row) => inputPrice.get(row.model || row.label) ?? 0;
   const outputOf = (row) => outputPrice.get(row.model || row.label) ?? 0;
+  const cachedOf = (row) => cachedPrice.get(row.model || row.label) ?? 0;
   const chartName = (row) => String(row.model || row.label || '');
-  if (isTokens) days = days.map((day) => ({ ...day, series: [...day.series].sort((a, b) => priceOf(a) - priceOf(b) || outputOf(a) - outputOf(b) || chartName(a).localeCompare(chartName(b))) }));
+  if (isTokens) days = days.map((day) => ({ ...day, series: [...day.series].sort((a, b) => priceOf(a) - priceOf(b) || cachedOf(a) - cachedOf(b) || outputOf(a) - outputOf(b) || chartName(a).localeCompare(chartName(b))) }));
   const totals = days.map((day) => day.series.reduce((sum, row) => sum + value(row), 0));
   const rawMax = Math.max(...totals, 0), magnitude = 10 ** Math.floor(Math.log10(rawMax || 1));
   const max = Math.ceil(rawMax / magnitude * 4) / 4 * magnitude || 1;
@@ -266,7 +268,7 @@ function renderChart(days, range, pricing = []) {
      const apiRows = day.series.filter((row) => row.api_cost != null), apiTotal = apiRows.reduce((sum, row) => sum + Number(row.api_cost), 0);
      const tokenTotal = day.series.reduce((sum, row) => sum + Number(row.total || 0), 0);
      const tipName = (row) => String(row.model || row.label || '');
-      const tipOrdered = [...rows].sort((a, b) => priceOf(b) - priceOf(a) || outputOf(b) - outputOf(a) || tipName(a).localeCompare(tipName(b)));
+      const tipOrdered = [...rows].sort((a, b) => priceOf(b) - priceOf(a) || cachedOf(b) - cachedOf(a) || outputOf(b) - outputOf(a) || tipName(a).localeCompare(tipName(b)));
      const tipText = tipOrdered.map((row) => `${row.model}: ${formatted(value(row))}`).join('\n') || 'Aucune activité';
      const tipRows = tipOrdered.map((row) => `<span class="tip-row"><i class="dot" style="background:${colorFor(row)}"></i><label>${escape(row.model || row.label)}</label><small>${escape(formatted(value(row)))}</small></span>`).join('') || '<span class="muted">Aucune activité</span>';
      const tipFoot = `${isTokens && tokenTotal ? `<span class="tip-foot">Total : ${escape(compact.format(tokenTotal))}</span>` : ''}${isTokens && apiRows.length ? `<span class="tip-foot">Estimation API : ${escape(money.format(apiTotal))}</span>` : ''}`;
@@ -320,19 +322,19 @@ function renderAgentDaily(days = [], range = null) {
   const systemDetails = el.querySelector('.agent-system-details');
   if (systemDetails) systemDetails.addEventListener('toggle', () => saveOpenPreference(systemAgentsPreferenceKey, systemDetails.open));
 }
+const relative = (value) => {
+  if (!value) return null;
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return 'à l’instant';
+  if (seconds < 3600) return `il y a ${Math.floor(seconds / 60)} min`;
+  if (seconds < 86400) return `il y a ${Math.floor(seconds / 3600)} h`;
+  return `il y a ${Math.floor(seconds / 86400)} j`;
+};
 function renderSkillDaily(days = [], range = null, source = { status: 'loading' }) {
   const el = $('#skill-daily');
   if (!el) return;
   if (typeof source === 'string') source = { status: source };
   if ($('#skills-range') && range) $('#skills-range').textContent = `${range.start} — ${range.end}`;
-  const relative = (value) => {
-    if (!value) return null;
-    const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
-    if (seconds < 60) return 'à l’instant';
-    if (seconds < 3600) return `il y a ${Math.floor(seconds / 60)} min`;
-    if (seconds < 86400) return `il y a ${Math.floor(seconds / 3600)} h`;
-    return `il y a ${Math.floor(seconds / 86400)} j`;
-  };
   const cacheLabel = source.cacheAvailable ? `Cache local · ${number.format(source.eventCount || 0)} événements` : 'Aucun cache local';
   const freshness = relative(source.lastImportedAt);
   if ($('#skills-source-meta')) {
@@ -444,7 +446,7 @@ function renderAdtention(balance) {
   el.innerHTML = `<span><b>Gains ADtention</b>${note ? `<small>${note}</small>` : ''}</span><strong>${money.format(Number(balance.balanceUsd) || 0)}</strong>`;
 }
 function renderPricing(rows) {
-  $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td><input class="model-color" type="color" name="color" value="${colorInputValue(row.color || modelColor(row.model))}" aria-label="Couleur de ${escape(row.model)}"></td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="text" inputmode="decimal" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
+  $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td class="muted">${escape(row.platform)}</td><td><input class="model-color" type="color" name="color" value="${colorInputValue(row.color || modelColor(row.model))}" aria-label="Couleur de ${escape(row.model)}"></td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning'], ['cache_writes_usd_per_million', 'cache_write'], ['per_minute_usd', 'per_minute']].map(([field, name]) => `<td><input class="rate" type="text" inputmode="decimal" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
 }
 const resetLabel = (iso) => {
   if (!iso) return 'reset inconnu';
@@ -554,7 +556,9 @@ async function loadLimits(force = false) {
 }
 function renderSplit(s) {
   const mode = $('#cost-mode').value === 'api_cost' ? 'api' : 'paid';
-  const parts = [['Input', 'input', Number(s.input) || 0, 'var(--blue)'], ['Cache', 'cached', Number(s.cached) || 0, 'var(--ink-muted)'], ['Output', 'output', Number(s.output) || 0, 'var(--accent)'], ['Raisonnement', 'reasoning', Number(s.reasoning) || 0, 'var(--violet)']];
+  const codexCached = Number(s.codex_cached) || 0;
+  const netInput = Math.max(0, (Number(s.input) || 0) - codexCached);
+  const parts = [['Input', 'input', netInput, 'var(--blue)'], ['Cache', 'cached', Number(s.cached) || 0, 'var(--ink-muted)'], ['Output', 'output', Number(s.output) || 0, 'var(--accent)'], ['Raisonnement', 'reasoning', Number(s.reasoning) || 0, 'var(--violet)']];
   const total = parts.reduce((sum, [, , value]) => sum + value, 0);
   const pct = (value, of) => value && of ? `${(value / of * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '0 %';
   if (!total) { $('#split-bar').innerHTML = ''; $('#split-costbar').innerHTML = ''; $('#split-legend').innerHTML = '<span class="muted">Aucune donnée.</span>'; return; }
@@ -567,12 +571,14 @@ function renderSplit(s) {
     : '<span class="muted">Aucun coût sur la période.</span>';
   $('#split-legend').innerHTML = parts.map(([label, key, value, color]) => `<span class="split-key"><i class="dot" style="background:${color}"></i><span class="split-keycol"><span><label>${escape(label)}</label> <small>${compact.format(value)} · ${pct(value, total)}</small></span><small class="split-cost">${money.format(Number(s[`${key}_${mode}_cost`]) || 0)}</small></span></span>`).join('');
 }
-function renderSources(sources) { $('#sources').innerHTML = sources.map((source) => `<span class="source"><i class="status-dot ${source.status === 'connected' ? 'connected' : ''}"></i><b>${escape(source.platform)}</b><span class="muted">${source.status === 'connected' ? `${number.format(source.sessions)} sessions` : 'non connecté'}</span></span>`).join(''); }
+function renderSources(sources) { $('#sources').innerHTML = sources.map((source) => `<span class="source"><i class="status-dot ${source.status === 'connected' ? 'connected' : ''}"></i><b>${escape(source.platform)}</b><span class="muted">${source.status === 'connected' ? `${number.format(source.sessions)} sessions` : 'non connecté'}${source.lastRefreshAt ? ` · actualisé ${relative(source.lastRefreshAt)}` : ''}</span></span>`).join(''); }
 function render(data) {
   const s = data.summary, cost = s[$('#cost-mode').value];
+  if (document.activeElement !== $('#subscription')) $('#subscription').checked = data.settings?.openai_subscription !== false;
   const models = mergeByModel(data.models);
   const projects = mergeByModel(data.projects.map((row) => ({ ...row, label: shortProject(row.label) })));
   const daily = data.daily.map((day) => ({ ...day, series: mergeByModel(day.series) }));
+  const topModel = models.find((row) => row.label !== 'Modèle incertain') || models[0];
   const codexFloat = s.codex_input ? Math.min(1, Number(s.codex_cached) / Number(s.codex_input)) * 100 : null;
   const openTotal = (Number(s.opencode_input)||0) + (Number(s.opencode_cached)||0);
   const openFloat = openTotal ? Math.min(1, Number(s.opencode_cached)/openTotal) * 100 : null;
@@ -584,9 +590,11 @@ function render(data) {
   };
   const cacheValue = `<span class="cache-breakdown"><span><small>Codex</small><b>${fmt(codexFloat)}</b></span><span><small>OpenCode</small><b>${fmt(openFloat)}</b></span></span>`;
   const saved = Number(s.cache_saved) || 0;
+  const missing = Number(s.missing_price_tokens) || 0;
+  const missingModels = Number(s.missing_price_models) || 0;
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
-  $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', models[0]?.label || '—', '', models[0]?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : $('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')].join('');
+  $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', topModel?.label || '—', '', topModel?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : (missing > 0 ? `${compact.format(missing)} tokens sans prix ni coût reporté (${missingModels} modèle${missingModels > 1 ? 's' : ''})` : ($('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')))].join('');
   renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAgentDaily(data.agentDaily, data.agentRange || data.range); renderAgentsControls(data.agentRange); renderSkillDaily(data.skillDaily, data.range, data.skillSource || data.skillStatus); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 let loadVersion = 0;
@@ -752,11 +760,15 @@ const normalizeRate = (input) => {
   const num = Number(input.value.trim().replace(',', '.'));
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');
 };
+$('#subscription').addEventListener('change', async (event) => {
+  await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ openai_subscription: event.target.checked }) });
+  load();
+});
 $('#pricing-rows').addEventListener('focusout', (event) => { if (event.target.matches('.rate')) normalizeRate(event.target); });
 $('#pricing').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.submitter || $('#pricing button'), feedback = $('#pricing-feedback');
-  const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, color: row.querySelector('[name="color"]').value, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) }));
+  const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, color: row.querySelector('[name="color"]').value, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning', 'cache_write', 'per_minute'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) }));
   button.disabled = true; button.textContent = 'Enregistrement…'; feedback.textContent = 'Mise à jour en cours'; feedback.classList.add('visible');
   try {
     const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) });

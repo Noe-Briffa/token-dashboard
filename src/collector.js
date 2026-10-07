@@ -134,12 +134,25 @@ const openCodeCaches = new WeakMap();
 const openCodeSkillCaches = new WeakMap();
 const OPEN_CODE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
+// Familles tarifaires : un nouveau modele herite du tarif famille tant que sa ligne reste a 0.
+const FAMILY_PRICING = [
+  { match: 'muse-spark', input: 0.10, cached: 0.002, output: 0.20, reasoning: 0.20, provider: 'meta' },
+];
+const familyPricingFor = (model) => FAMILY_PRICING.find((entry) => String(model).split('/').pop().startsWith(entry.match));
+
+export const UNCERTAIN_MODEL = 'Modèle incertain'; // bucket sans modèle prouvé, exclu du top modèle
+
 // Contract shared by current Codex collector and future OpenCode/Claude collectors.
+const clampFuture = (value) => {
+  if (!value) return value;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && time > Date.now() ? new Date().toISOString() : value;
+};
 export function normalizeSession(session) {
   return {
     platform: session.platform, provider: session.provider || null, agent: session.agent, id: session.id, sourcePath: session.sourcePath,
-    project: session.project || null, model: session.model || null, startedAt: session.startedAt || null,
-    endedAt: session.endedAt || null, durationSeconds: integer(session.durationSeconds),
+    project: session.project || null, model: session.model || null, startedAt: clampFuture(session.startedAt || null),
+    endedAt: clampFuture(session.endedAt || null), durationSeconds: integer(session.durationSeconds),
     input: integer(session.input), cached: integer(session.cached), output: integer(session.output),
     reasoning: integer(session.reasoning), total: integer(session.total),
     modelCalls: integer(session.modelCalls),
@@ -180,14 +193,18 @@ export function parseCodexSession(file) {
     if (!candidate) return;
     const snapshot = { stamp, usage: snap(candidate), model: currentModel };
     if (!previous) { previous = snapshot; return; }
-    if (snapshot.usage.total < previous.usage.total) { previous = snapshot; return; }
+    if (snapshot.usage.total < previous.usage.total) {
+      // Compteurs repartis : le snapshot vaut apport frais, pas zéro (reprise, pas abandon).
+      previous = { stamp: null, usage: { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 }, model: snapshot.model };
+    }
     const day = snapshot.stamp ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date(snapshot.stamp)) : null;
     const hour = snapshot.stamp ? parisHour.format(new Date(snapshot.stamp)) : null;
     const key = `${day || 'unknown'}\u0000${hour || ''}\u0000${snapshot.model || ''}`;
-     const delta = buckets.get(key) || { day, hour, model: snapshot.model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0, calls: 0 };
+     const delta = buckets.get(key) || { day, hour, model: snapshot.model, firstAt: snapshot.stamp, lastAt: snapshot.stamp, input: 0, cached: 0, output: 0, reasoning: 0, total: 0, calls: 0, proven: snapshot.model != null };
     delta.firstAt = delta.firstAt || snapshot.stamp;
     delta.lastAt = snapshot.stamp || delta.lastAt;
     for (const field of ['input', 'cached', 'output', 'reasoning', 'total']) delta[field] += Math.max(0, snapshot.usage[field] - previous.usage[field]);
+    delta.proven = delta.proven || snapshot.model != null;
     buckets.set(key, delta);
     previous = snapshot;
   });
@@ -195,10 +212,12 @@ export function parseCodexSession(file) {
   const fork = stem.includes('_') ? stem.slice(stem.lastIndexOf('_') + 1) : '';
   const sessionId = meta.session_id || meta.id || stem;
   const fileId = fork ? `${sessionId}~${fork}` : sessionId; // ids scopés au fichier : deltas disjoints, pas de collision
-  const fallbackModel = currentModel || meta.model || (modelSeq.length === 1 ? modelSeq[0] : null);
+  const singleModel = modelSeq.length === 1 ? modelSeq[0] : null;
+  const fallbackModel = currentModel || meta.model || singleModel;
   const relabeledBuckets = new Map();
   for (const bucket of buckets.values()) {
-    bucket.model ||= fallbackModel;
+    // Sans modèle prouvé ni modèle de session, pas d'imputation silencieuse.
+    if (!bucket.model) bucket.model = bucket.proven ? fallbackModel : (meta.model || singleModel || UNCERTAIN_MODEL);
     const key = `${bucket.day || 'unknown'}\u0000${bucket.hour || ''}\u0000${bucket.model || ''}`;
     const current = relabeledBuckets.get(key);
     if (!current) relabeledBuckets.set(key, bucket);
@@ -229,13 +248,23 @@ export function importSessions(db, sessions) {
   let imported = 0;
   const seen = new Set();
   const ensurePricing = db.prepare("INSERT OR IGNORE INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, pricing_unit, updated_at) VALUES (?, ?, 0, 0, 0, 0, 'per_1M_tokens', datetime('now'))");
+  const currentPricing = db.prepare('SELECT input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million FROM model_pricing WHERE platform=? AND model=?');
+  const seedFamily = db.prepare("UPDATE model_pricing SET input_usd_per_million=?, cached_input_usd_per_million=?, output_usd_per_million=?, reasoning_usd_per_million=?, provider=COALESCE(provider,?), updated_at=datetime('now') WHERE platform=? AND model=?");
   for (const raw of sessions) {
     const item = normalizeSession(raw);
     upsert.run(item.id, item.platform, item.provider, item.agent, item.sourcePath, item.project, item.model, item.startedAt, item.endedAt, item.durationSeconds, item.input, item.cached, item.output, item.reasoning, item.total, item.modelCalls, item.reportedCost, new Date().toISOString());
     imported++;
-    // nouveau modèle utilisé => ligne prix à saisir, jamais de doublon (INSERT OR IGNORE)
+    // nouveau modèle utilisé => ligne prix à saisir, jamais de doublon (INSERT OR IGNORE) + tarif famille si ligne à 0
     const key = `${item.platform}__${item.model}`;
-    if (item.model && !seen.has(key)) { seen.add(key); ensurePricing.run(item.platform, item.model); }
+    if (item.model && !seen.has(key)) {
+      seen.add(key);
+      ensurePricing.run(item.platform, item.model);
+      const family = familyPricingFor(item.model);
+      if (family) {
+        const current = currentPricing.get(item.platform, item.model);
+        if (current && !Number(current.input_usd_per_million) && !Number(current.cached_input_usd_per_million) && !Number(current.output_usd_per_million) && !Number(current.reasoning_usd_per_million)) seedFamily.run(family.input, family.cached, family.output, family.reasoning, family.provider, item.platform, item.model);
+      }
+    }
   }
   return imported;
 }
@@ -594,16 +623,22 @@ export function collectOpenCode(db, { file = defaultOpenCodeDatabase(), isolated
               perDayModel.set(key, cur);
           }
             if (hasMessages && perDayModel.size) {
-              return [...perDayModel.values()].map((agg) => {
+              const splits = [...perDayModel.values()];
+              const splitTokens = splits.reduce((sum, agg) => sum + (agg.total || agg.input + agg.cached + agg.output + agg.reasoning), 0);
+              return splits.map((agg, index) => {
                 const day = agg.day || iso(row.time_created)?.slice(0,10);
                 const id = agg.day ? `opencode:${row.id}:${agg.model}:${agg.day}:${agg.hour || 'unknown'}` : `opencode:${row.id}:${agg.model}`;
                 const startedAt = agg.firstAt != null ? iso(agg.firstAt) : (agg.day ? new Date(`${agg.day}T12:00:00+02:00`).toISOString() : base.startedAt);
                 const endedAt = agg.lastAt != null ? iso(agg.lastAt) : startedAt;
+                const tokens = agg.total || agg.input + agg.cached + agg.output + agg.reasoning;
+                // cout reporte ventile au prorata des tokens, jamais duplique par split
+                const reportedCost = base.reportedCost == null ? null : (splitTokens > 0 ? base.reportedCost * tokens / splitTokens : (index === 0 ? base.reportedCost : 0));
                 return normalizeSession({
                   ...base, provider: agg.provider, id, sourcePath: id,
                   model: agg.model, startedAt, endedAt,
                   durationSeconds: agg.firstAt != null && agg.lastAt != null ? Math.max(0, Math.round((Number(agg.lastAt) - Number(agg.firstAt)) / 1000)) : 0,
                    input: agg.input, cached: agg.cached, output: agg.output, reasoning: agg.reasoning, total: agg.total || agg.input+agg.cached+agg.output+agg.reasoning, modelCalls: agg.calls,
+                  reportedCost,
                 });
               });
             }
