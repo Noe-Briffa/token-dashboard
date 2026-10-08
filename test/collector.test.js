@@ -546,3 +546,62 @@ test('falls back to a full Codex parse when most files change', async () => {
   assert.deepEqual(dumpCodex(db), dumpCodex(reference));
   db.close(); reference.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
+
+test('ignores huge non-token lines while keeping their timestamps', async () => {
+  const directory = temp(), root = path.join(directory, 'sessions');
+  fs.mkdirSync(root, { recursive: true });
+  const file = path.join(root, 'big.jsonl');
+  const rows = codexFixture('big-1', 'gpt-big', 100);
+  const big = '{"timestamp":"2026-08-31T10:05:00Z","type":"event_msg","payload":{"type":"response_item:custom_tool_call_output","data":"' + 'x'.repeat(2 * 1024 * 1024) + '"}}';
+  fs.writeFileSync(file, rows.map(JSON.stringify).join('\n') + '\n' + big);
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const result = await collectCodexAsync(db, { root });
+  assert.equal(result.imported, 1);
+  const row = db.prepare('SELECT total_tokens, ended_at FROM sessions WHERE id=?').get('big-1');
+  assert.equal(row.total_tokens, 100);
+  assert.equal(row.ended_at, '2026-08-31T10:02:00Z');
+  fs.writeFileSync(path.join(root, 'stamp.jsonl'), big);
+  const stamped = parseCodexSession(path.join(root, 'stamp.jsonl'));
+  assert.equal(stamped.startedAt, '2026-08-31T10:05:00Z');
+  assert.equal(stamped.endedAt, '2026-08-31T10:05:00Z');
+  assert.equal(stamped.total, 0);
+  const reference = openDatabase(path.join(directory, 'reference.sqlite'));
+  collectCodex(reference, { root });
+  assert.deepEqual(dumpCodex(db), dumpCodex(reference));
+  db.close(); reference.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('decodes multibyte characters split across read blocks', () => {
+  const directory = temp(), root = path.join(directory, 'sessions');
+  fs.mkdirSync(root, { recursive: true });
+  const file = path.join(root, 'utf8.jsonl');
+  const padding = 'é'.repeat(70000);
+  const rows = [
+    { timestamp: '2026-08-31T10:00:00Z', type: 'session_meta', payload: { session_id: 'utf8-1', timestamp: '2026-08-31T10:00:00Z', cwd: 'C:/travail-été', originator: 'Codex CLI', note: padding } },
+    { timestamp: '2026-08-31T10:01:00Z', type: 'turn_context', payload: { model: 'gpt-été' } },
+    { timestamp: '2026-08-31T10:01:30Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 } } } },
+    { timestamp: '2026-08-31T10:02:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 10 } } } },
+  ];
+  fs.writeFileSync(file, rows.map(JSON.stringify).join('\n'));
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const result = collectCodex(db, { root });
+  assert.equal(result.imported, 1);
+  const row = db.prepare('SELECT model, project, total_tokens FROM sessions WHERE id=?').get('utf8-1');
+  assert.equal(row.model, 'gpt-été');
+  assert.equal(row.project, 'C:/travail-été');
+  assert.equal(row.total_tokens, 10);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('reports filesRead and filesReused across incremental runs', async () => {
+  const directory = temp(), { root, fileA } = twoFileRoot(directory);
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const first = await collectCodexAsync(db, { root });
+  assert.equal(first.filesRead, 2);
+  assert.equal(first.filesReused, 0);
+  fs.appendFileSync(fileA, '\n' + JSON.stringify(codexUsage(250, 250)));
+  const second = await collectCodexAsync(db, { root });
+  assert.equal(second.filesRead, 1);
+  assert.equal(second.filesReused, 1);
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});

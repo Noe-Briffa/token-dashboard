@@ -114,15 +114,18 @@ function openCodeSignature(file) {
 function readLinesSync(file, onLine) {
   const descriptor = fs.openSync(file, 'r');
   const buffer = Buffer.allocUnsafe(64 * 1024);
-  let remainder = '';
+  let parts = [];
+  const emit = () => { onLine(Buffer.concat(parts).toString('utf8')); parts = []; };
   try {
     let bytesRead;
     while ((bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null)) > 0) {
-      const lines = `${remainder}${buffer.subarray(0, bytesRead).toString('utf8')}`.split(/\r?\n/);
-      remainder = lines.pop() || '';
-      for (const line of lines) onLine(line);
+      let start = 0;
+      for (let i = 0; i < bytesRead; i++) {
+        if (buffer[i] === 10) { parts.push(Buffer.from(buffer.subarray(start, i))); emit(); start = i + 1; }
+      }
+      if (start < bytesRead) parts.push(Buffer.from(buffer.subarray(start, bytesRead)));
     }
-    if (remainder) onLine(remainder);
+    if (parts.length) emit();
   } finally { fs.closeSync(descriptor); }
 }
 
@@ -179,8 +182,16 @@ export function parseCodexSession(file) {
   let currentModel = null;
   const buckets = new Map();
   let previous = null;
+  const stampOnly = /"timestamp":"([^"]+)"/;
   readLinesSync(file, (line) => {
     if (!line) return;
+    if (!line.includes('total_token_usage') && !line.includes('session_meta') && !line.includes('turn_context')) {
+      const match = stampOnly.exec(line);
+      const stamp = match && match[1];
+      if (stamp && (!startedAt || stamp < startedAt)) startedAt = stamp;
+      if (stamp && (!endedAt || stamp > endedAt)) endedAt = stamp;
+      return;
+    }
     let record;
     try { record = JSON.parse(line); } catch { return; }
     const stamp = record.timestamp;
@@ -336,11 +347,13 @@ export function collectCodex(db, { root = defaultCodexRoot(), isolated = false }
       return { imported: 0, source: root, platform: 'codex', status: 'not_connected', error: error.message };
     }
   }
+  let filesRead = 0;
   for (const file of files) {
     const fileSignature = statSignature(file), previous = cache.files.get(file);
     if (!previous || previous.signature !== fileSignature) {
       const parsed = parseCodexSession(file);
       cache.files.set(file, { signature: fileSignature, sessions: Array.isArray(parsed) ? parsed : [parsed] });
+      filesRead++;
     }
   }
   for (const file of cache.files.keys()) if (!files.includes(file)) cache.files.delete(file);
@@ -354,7 +367,7 @@ export function collectCodex(db, { root = defaultCodexRoot(), isolated = false }
     if (files.length) db.prepare("DELETE FROM sessions WHERE platform='codex'").run();
     const imported = importSessions(db, sessions);
     db.exec('COMMIT');
-    const result = { imported, sourceSessions: sourceSessions.size, source: root, platform: 'codex' };
+    const result = { imported, sourceSessions: sourceSessions.size, source: root, platform: 'codex', filesRead, filesReused: files.length - filesRead };
     cache.signature = signature;
     cache.result = result;
     codexCaches.set(db, cache);
@@ -369,7 +382,7 @@ export async function collectCodexAsync(db, { root = defaultCodexRoot() } = {}) 
   const signature = sourceSignature(files), cache = codexAsyncCaches.get(db) || { root, signature: null, files: new Map() };
   if (cache.root === root && cache.signature === signature) return { ...cache.result, imported: 0, skipped: true };
   cache.root = root;
-  if (!files.length) return { imported: 0, source: root, platform: 'codex', sourceSessions: 0 };
+  if (!files.length) return { imported: 0, source: root, platform: 'codex', sourceSessions: 0, filesRead: 0, filesReused: 0 };
   const known = new Set(files);
   const changed = files.filter((item) => cache.files.get(item) !== statSignature(item));
   const removed = [...cache.files.keys()].filter((item) => !known.has(item));
@@ -386,7 +399,7 @@ export async function collectCodexAsync(db, { root = defaultCodexRoot() } = {}) 
         db.exec('COMMIT');
         const ids = db.prepare("SELECT id FROM sessions WHERE platform='codex'").all();
         const sourceSessions = new Set(ids.map((row) => String(row.id).split('~')[0].split(':')[0])).size;
-        result = { imported, sourceSessions, source: root, platform: 'codex' };
+        result = { imported, sourceSessions, source: root, platform: 'codex', filesRead: changed.length, filesReused: files.length - changed.length - removed.length };
       } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }
       for (const item of changed) cache.files.set(item, statSignature(item));
       for (const item of removed) cache.files.delete(item);
