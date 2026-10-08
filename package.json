@@ -1,6 +1,6 @@
 {
   "name": "ai-usage-monitor",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Dashboard local de suivi des usages Codex et OpenCode",
   "author": "Noe Briffa",
   "private": true,
