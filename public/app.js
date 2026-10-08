@@ -69,7 +69,7 @@ function applyTheme(preference) {
   if (meta) meta.content = dark ? '#26342f' : '#f2f0e9';
   $('#theme').value = preference;
 }
-const modeLabel = () => $('#cost-mode').value === 'api_cost' ? 'Estimation API' : 'Coût payé';
+const modeLabel = () => 'Estimation API';
 const value = (row) => Number(row[$('#metric').value === 'cost' ? $('#cost-mode').value : 'total'] ?? 0);
 const formatted = (amount) => $('#metric').value === 'cost' ? money.format(amount) : compact.format(amount);
 const tokenThreshold = () => $('#metric').value === 'total' ? Math.max(0, Number($('#min-tokens')?.value) || 0) * 1e6 : 0;
@@ -555,7 +555,7 @@ async function loadLimits(force = false) {
   }
 }
 function renderSplit(s) {
-  const mode = $('#cost-mode').value === 'api_cost' ? 'api' : 'paid';
+  const mode = 'api';
   const codexCached = Number(s.codex_cached) || 0;
   const netInput = Math.max(0, (Number(s.input) || 0) - codexCached);
   const parts = [['Input', 'input', netInput, 'var(--blue)'], ['Cache', 'cached', Number(s.cached) || 0, 'var(--ink-muted)'], ['Output', 'output', Number(s.output) || 0, 'var(--accent)'], ['Raisonnement', 'reasoning', Number(s.reasoning) || 0, 'var(--violet)']];
@@ -574,7 +574,6 @@ function renderSplit(s) {
 function renderSources(sources) { $('#sources').innerHTML = sources.map((source) => `<span class="source"><i class="status-dot ${source.status === 'connected' ? 'connected' : ''}"></i><b>${escape(source.platform)}</b><span class="muted">${source.status === 'connected' ? `${number.format(source.sessions)} sessions` : 'non connecté'}${source.lastRefreshAt ? ` · actualisé ${relative(source.lastRefreshAt)}` : ''}</span></span>`).join(''); }
 function render(data) {
   const s = data.summary, cost = s[$('#cost-mode').value];
-  if (document.activeElement !== $('#subscription')) $('#subscription').checked = data.settings?.openai_subscription !== false;
   const models = mergeByModel(data.models);
   const projects = mergeByModel(data.projects.map((row) => ({ ...row, label: shortProject(row.label) })));
   const daily = data.daily.map((day) => ({ ...day, series: mergeByModel(day.series) }));
@@ -594,7 +593,7 @@ function render(data) {
   const missingModels = Number(s.missing_price_models) || 0;
   const cacheNote = saved > 0 ? `${money.format(saved)} économisés` : 'Économie calculée sur la période';
   const cacheTitle = 'Prompt cache (période filtrée) : Codex = cached / input, OpenCode = cached / (input + cached). % sur tokens prompt. Économie = cached × (prix input − prix cache) sur période filtrée.';
-  $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', topModel?.label || '—', '', topModel?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : (missing > 0 ? `${compact.format(missing)} tokens sans prix ni coût reporté (${missingModels} modèle${missingModels > 1 ? 's' : ''})` : ($('#cost-mode').value === 'paid_cost' ? 'Codex et OpenAI inclus' : 'tarifs API ou coût exact')))].join('');
+  $('#metrics').innerHTML = [metric('Sessions', number.format(s.sessions)), metric('Tokens totaux', compact.format(s.total)), metric('Prompt cache', cacheValue, cacheNote, cacheTitle), metric('Modèle principal', topModel?.label || '—', '', topModel?.label || ''), metric(modeLabel(), cost == null ? '—' : money.format(cost), cost == null ? 'prix manquants' : (missing > 0 ? `${compact.format(missing)} tokens sans prix ni coût reporté (${missingModels} modèle${missingModels > 1 ? 's' : ''})` : 'tarifs API ou coût exact'))].join('');
   renderDonut('model-donut', 'model-total', models, 'model'); renderDonut('platform-donut', 'platform-total', data.platforms, 'platform'); renderDonut('project-donut', 'project-total', projects, 'project'); renderSplit(s); renderChart(daily, data.range, data.pricing); renderAgentDaily(data.agentDaily, data.agentRange || data.range); renderAgentsControls(data.agentRange); renderSkillDaily(data.skillDaily, data.range, data.skillSource || data.skillStatus); renderActivityHeatmap(data.activity, data.activityVersion, data.activityRange); renderAdtention(data.adtention); if (!$('#pricing').contains(document.activeElement)) renderPricing(data.pricing); renderSources(data.sources);
 }
 let loadVersion = 0;
@@ -760,10 +759,7 @@ const normalizeRate = (input) => {
   const num = Number(input.value.trim().replace(',', '.'));
   if (input.value.trim() !== '' && Number.isFinite(num) && num >= 0) input.value = String(num).replace('.', ',');
 };
-$('#subscription').addEventListener('change', async (event) => {
-  await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ openai_subscription: event.target.checked }) });
-  load();
-});
+
 $('#pricing-rows').addEventListener('focusout', (event) => { if (event.target.matches('.rate')) normalizeRate(event.target); });
 $('#pricing').addEventListener('submit', async (event) => {
   event.preventDefault();
