@@ -67,11 +67,11 @@ export function openDatabase(file) {
   if (!pricingCols.has('per_minute_usd')) db.exec('ALTER TABLE model_pricing ADD COLUMN per_minute_usd REAL');
   if (!pricingCols.has('color')) db.exec('ALTER TABLE model_pricing ADD COLUMN color TEXT');
   db.exec("DELETE FROM model_pricing WHERE platform='opencode' AND model LIKE '{%\"id\"%'");
+  db.exec("UPDATE model_pricing SET input_usd_per_million=0, cached_input_usd_per_million=0, output_usd_per_million=0, reasoning_usd_per_million=0, updated_at=datetime('now') WHERE model LIKE 'muse-spark-%-free'");
   // seed / fix Muse Spark 1.2 Contributor: $0.10 in / $0.002 cached / $0.20 out (Contributor tier, Meta)
   try {
     for (const p of ['codex','opencode']) {
       db.prepare("INSERT OR IGNORE INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, provider, pricing_unit, updated_at) VALUES (?, 'muse-spark-1.2-contributor-free', 0.10, 0.002, 0.20, 0.20, 'meta', 'per_1M_tokens', datetime('now'))").run(p);
-      db.prepare("UPDATE model_pricing SET input_usd_per_million=0.10, cached_input_usd_per_million=0.002, output_usd_per_million=0.20, reasoning_usd_per_million=0.20, provider='meta', pricing_unit='per_1M_tokens', updated_at=datetime('now') WHERE platform=? AND model='muse-spark-1.2-contributor-free' AND input_usd_per_million=0 AND output_usd_per_million=0").run(p);
     }
   } catch {}
   // fix historic opencode totals that excluded cached reads (total = input+output+reasoning)
@@ -143,7 +143,7 @@ const OPEN_CODE_SKILLS_INTERVAL_MS = 15 * 60 * 1000;
 const FAMILY_PRICING = [
   { match: 'muse-spark', input: 0.10, cached: 0.002, output: 0.20, reasoning: 0.20, provider: 'meta' },
 ];
-const familyPricingFor = (model) => FAMILY_PRICING.find((entry) => String(model).split('/').pop().startsWith(entry.match));
+const familyPricingFor = (model) => String(model).endsWith('-free') ? undefined : FAMILY_PRICING.find((entry) => String(model).split('/').pop().startsWith(entry.match));
 
 export const UNCERTAIN_MODEL = 'Modèle incertain'; // bucket sans modèle prouvé, exclu du top modèle
 

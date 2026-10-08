@@ -357,7 +357,8 @@ Les tokens de cache sont lus depuis `tokens.cache.read`.
 Le total est pris depuis `tokens.total` lorsqu'il existe. Sinon il est recalculé avec :
 
 ```text
-input + cache read + output + reasoning
+Codex : input + output (raisonnement inclus dans la sortie)
+OpenCode : input + cache read + output + reasoning
 ```
 
 Si l'agrégation des messages échoue, le collecteur utilise les compteurs agrégés de la session comme solution de repli.
@@ -909,8 +910,8 @@ La formule dépend de la plateforme, car Codex compte les tokens cache dans `inp
 ```text
 Codex : ((input_tokens - cached_input_tokens) * prix_input
   + cached_input_tokens * prix_cache
-  + output_tokens * prix_output
-  + reasoning_tokens * prix_reasoning) / 1 000 000
+  + output_tokens * prix_output) / 1 000 000
+(le raisonnement Codex est inclus dans output_tokens : tarif sortie appliqué, jamais ajouté)
 OpenCode : (input_tokens * prix_input
   + cached_input_tokens * prix_cache
   + output_tokens * prix_output
@@ -1092,7 +1093,7 @@ Relancer Codex peut renouveler la session locale.
 
 ### Les coûts sont à zéro
 
-Ouvrir `Prix des modèles` et saisir les tarifs input, cache, output et reasoning pour les modèles utilisés.
+Ouvrir `Prix des modèles` et saisir les tarifs input, cache, output et reasoning (hors Codex, raisonnement inclus dans la sortie) pour les modèles utilisés.
 
 Les tarifs sont conservés dans SQLite. Ils n'ont pas besoin d'être saisis à chaque démarrage.
 

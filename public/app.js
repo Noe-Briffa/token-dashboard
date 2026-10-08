@@ -446,7 +446,7 @@ function renderAdtention(balance) {
   el.innerHTML = `<span><b>Gains ADtention</b>${note ? `<small>${note}</small>` : ''}</span><strong>${money.format(Number(balance.balanceUsd) || 0)}</strong>`;
 }
 function renderPricing(rows) {
-  $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td class="muted">${escape(row.platform)}</td><td><input class="model-color" type="color" name="color" value="${colorInputValue(row.color || modelColor(row.model))}" aria-label="Couleur de ${escape(row.model)}"></td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning'], ['cache_writes_usd_per_million', 'cache_write'], ['per_minute_usd', 'per_minute']].map(([field, name]) => `<td><input class="rate" type="text" inputmode="decimal" name="${name}" value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
+  $('#pricing-rows').innerHTML = rows.map((row) => `<tr data-platform="${escape(row.platform)}" data-model="${escape(row.model)}"><td class="muted">${escape(row.platform)}</td><td><input class="model-color" type="color" name="color" value="${colorInputValue(row.color || modelColor(row.model))}" aria-label="Couleur de ${escape(row.model)}"></td><td>${escape(row.model)}</td>${[['input_usd_per_million', 'input'], ['cached_input_usd_per_million', 'cached'], ['output_usd_per_million', 'output'], ['reasoning_usd_per_million', 'reasoning']].map(([field, name]) => `<td><input class="rate" type="text" inputmode="decimal" name="${name}"${name === 'reasoning' && row.platform === 'codex' ? ' disabled title="Raisonnement inclus dans la sortie pour Codex"' : ''} value="${row[field] ?? ''}" placeholder="—"></td>`).join('')}</tr>`).join('');
 }
 const resetLabel = (iso) => {
   if (!iso) return 'reset inconnu';
@@ -558,7 +558,7 @@ function renderSplit(s) {
   const mode = 'api';
   const codexCached = Number(s.codex_cached) || 0;
   const netInput = Math.max(0, (Number(s.input) || 0) - codexCached);
-  const parts = [['Input', 'input', netInput, 'var(--blue)'], ['Cache', 'cached', Number(s.cached) || 0, 'var(--ink-muted)'], ['Output', 'output', Number(s.output) || 0, 'var(--accent)'], ['Raisonnement', 'reasoning', Number(s.reasoning) || 0, 'var(--violet)']];
+  const parts = [['Input', 'input', netInput, 'var(--blue)'], ['Cache', 'cached', Number(s.cached) || 0, 'var(--ink-muted)'], ['Output', 'output', Math.max(0, (Number(s.output) || 0) - (Number(s.codex_reasoning) || 0)), 'var(--accent)'], ['Raisonnement', 'reasoning', Number(s.reasoning) || 0, 'var(--violet)']];
   const total = parts.reduce((sum, [, , value]) => sum + value, 0);
   const pct = (value, of) => value && of ? `${(value / of * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '0 %';
   if (!total) { $('#split-bar').innerHTML = ''; $('#split-costbar').innerHTML = ''; $('#split-legend').innerHTML = '<span class="muted">Aucune donnée.</span>'; return; }
@@ -764,7 +764,7 @@ $('#pricing-rows').addEventListener('focusout', (event) => { if (event.target.ma
 $('#pricing').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.submitter || $('#pricing button'), feedback = $('#pricing-feedback');
-  const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, color: row.querySelector('[name="color"]').value, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning', 'cache_write', 'per_minute'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) }));
+  const pricing = [...$('#pricing-rows').rows].map((row) => ({ platform: row.dataset.platform, model: row.dataset.model, color: row.querySelector('[name="color"]').value, ...Object.fromEntries(['input', 'cached', 'output', 'reasoning'].map((name) => [name, (row.querySelector(`[name="${name}"]`).value || '0').replace(',', '.')])) }));
   button.disabled = true; button.textContent = 'Enregistrement…'; feedback.textContent = 'Mise à jour en cours'; feedback.classList.add('visible');
   try {
     const response = await fetch('/api/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }) });

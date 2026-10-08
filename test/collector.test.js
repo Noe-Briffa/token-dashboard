@@ -93,11 +93,11 @@ test('preserves missing reported cost while retaining a real free cost', () => {
 test('stored price changes computed cost without changing session data', () => {
   const directory = temp(), db = openDatabase(path.join(directory, 'usage.sqlite'));
   importSessions(db, [{ platform: 'codex', agent: 'Codex CLI', id: 'cost-1', sourcePath: 'session', model: 'gpt-test', input: 100, cached: 50, output: 20, reasoning: 10, total: 130 }]);
-  const query = `SELECT CASE WHEN p.model IS NOT NULL THEN ((CASE WHEN s.platform='codex' THEN MAX(s.input_tokens-s.cached_input_tokens,0) ELSE s.input_tokens END*p.input_usd_per_million)+s.cached_input_tokens*p.cached_input_usd_per_million+s.output_tokens*p.output_usd_per_million+s.reasoning_tokens*p.reasoning_usd_per_million)/1000000.0 END cost FROM sessions s LEFT JOIN model_pricing p ON p.platform=s.platform AND p.model=s.model WHERE s.id='cost-1'`;
+  const query = `SELECT CASE WHEN p.model IS NOT NULL THEN ((CASE WHEN s.platform='codex' THEN MAX(s.input_tokens-s.cached_input_tokens,0) ELSE s.input_tokens END*p.input_usd_per_million)+s.cached_input_tokens*p.cached_input_usd_per_million+s.output_tokens*p.output_usd_per_million)/1000000.0 END cost FROM sessions s LEFT JOIN model_pricing p ON p.platform=s.platform AND p.model=s.model WHERE s.id='cost-1'`;
   assert.equal(db.prepare(query).get().cost, 0); // auto-ligne prix à 0 jusqu'à saisie
   const price = db.prepare("INSERT INTO model_pricing (platform, model, input_usd_per_million, cached_input_usd_per_million, output_usd_per_million, reasoning_usd_per_million, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(platform, model) DO UPDATE SET input_usd_per_million=excluded.input_usd_per_million, cached_input_usd_per_million=excluded.cached_input_usd_per_million, output_usd_per_million=excluded.output_usd_per_million, reasoning_usd_per_million=excluded.reasoning_usd_per_million, updated_at=excluded.updated_at");
-  price.run('codex', 'gpt-test', 1, 0.5, 2, 2, 'now'); assert.equal(db.prepare(query).get().cost, 0.000135); // (100-50)*1 + 50*0.5 + 20*2 + 10*2
-  db.prepare('UPDATE model_pricing SET output_usd_per_million=4').run(); assert.equal(db.prepare(query).get().cost, 0.000175);
+  price.run('codex', 'gpt-test', 1, 0.5, 2, 2, 'now'); assert.equal(db.prepare(query).get().cost, 0.000115); // (100-50)*1 + 50*0.5 + 20*2, raisonnement inclus dans la sortie
+  db.prepare('UPDATE model_pricing SET output_usd_per_million=4').run(); assert.equal(db.prepare(query).get().cost, 0.000155);
   assert.equal(db.prepare("SELECT total_tokens FROM sessions WHERE id='cost-1'").get().total_tokens, 130);
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });

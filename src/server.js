@@ -13,23 +13,7 @@ fs.mkdirSync(dataDir, { recursive: true });
 const db = openDatabase(path.join(dataDir, 'usage.sqlite'));
 const legacyDatabase = path.join(process.env.AI_USAGE_LEGACY_DATA_DIR || path.join(root, 'data'), 'usage.sqlite');
 if (path.resolve(dataDir, 'usage.sqlite') !== path.resolve(legacyDatabase)) mergeLegacyData(db, legacyDatabase, process.env.AI_USAGE_MIGRATION_KEY);
-const estPart = {
-  // Codex : input inclut le cache (total = input + output + reasoning) => input net = input - cached.
-  // OpenCode : champs disjoints, comptage direct.
-  input: "(CASE WHEN s.platform='codex' THEN MAX(s.input_tokens - s.cached_input_tokens, 0) ELSE s.input_tokens END * COALESCE(p.input_usd_per_million,0)) / 1000000.0",
-  cached: "(s.cached_input_tokens * COALESCE(p.cached_input_usd_per_million,0)) / 1000000.0",
-  output: "(s.output_tokens * COALESCE(p.output_usd_per_million,0)) / 1000000.0",
-  reasoning: "(s.reasoning_tokens * COALESCE(p.reasoning_usd_per_million,0)) / 1000000.0",
-};
-const estimatedCost = `(${estPart.input} + ${estPart.cached} + ${estPart.output} + ${estPart.reasoning})`;
-// reported_cost_usd (OpenCode) prioritaire quand renseigne ; 0 et NULL = pas d'info.
-const cost = `COALESCE(NULLIF(s.reported_cost_usd,0), ${estimatedCost})`;
-// Total net : Codex input inclut le cache, OpenCode champs disjoints.
-const tokenTotal = `(CASE WHEN s.platform='codex' THEN s.input_tokens + s.output_tokens + s.reasoning_tokens ELSE s.input_tokens + s.cached_input_tokens + s.output_tokens + s.reasoning_tokens END)`;
-// Ligne a zero = prix non saisi, jamais gratuite volontaire.
-// Ligne vide = aucun token et aucun cout : exclue des compteurs, cout eventuel conserve.
-const nonemptyRow = `(NOT (COALESCE(s.input_tokens,0)=0 AND COALESCE(s.cached_input_tokens,0)=0 AND COALESCE(s.output_tokens,0)=0 AND COALESCE(s.reasoning_tokens,0)=0 AND COALESCE(s.total_tokens,0)=0 AND COALESCE(s.reported_cost_usd,0)=0))`;
-const missingPriceCond = `(COALESCE(s.reported_cost_usd,0)=0 AND (p.model IS NULL OR (COALESCE(p.input_usd_per_million,0)=0 AND COALESCE(p.cached_input_usd_per_million,0)=0 AND COALESCE(p.output_usd_per_million,0)=0 AND COALESCE(p.reasoning_usd_per_million,0)=0 AND COALESCE(p.cache_writes_usd_per_million,0)=0 AND COALESCE(p.per_minute_usd,0)=0)))`;
+import { buildCosts, cost, estimatedCost, estPart, missingPriceCond, nonemptyRow, tokenTotal } from './costs.js';
 const ACTIVITY_VERSION = 3;
 let sourceState = { codex: { status: 'not_connected' }, opencode: { status: 'not_connected' } };
 export const lastRefreshAt = { codex: null, opencode: null }; // dernière collecte réussie par plateforme
@@ -94,23 +78,7 @@ async function adtentionBalance() {
 function subscriptionEnabled() { return db.prepare("SELECT value FROM app_settings WHERE key='openai_subscription'").get()?.value === 'true'; }
 const normalizedProjectSql = "LOWER(REPLACE(COALESCE(s.project, ''), char(92), '/'))";
 const generalProjectSql = `(${normalizedProjectSql} = 'c:/users/noebr' OR ${normalizedProjectSql} = 'c:/users/noebr/documents/opencode' OR ${normalizedProjectSql} LIKE 'c:/users/noebr/documents/opencode/%')`;
-function costs() {
-  const api = cost;
-  const openAiModel = `(LOWER(COALESCE(s.provider,''))='openai' OR LOWER(COALESCE(s.model,'')) GLOB 'gpt-*' OR LOWER(COALESCE(s.model,'')) LIKE '%/gpt-%' OR LOWER(COALESCE(s.model,'')) GLOB 'o[134]-*' OR LOWER(COALESCE(s.model,'')) GLOB 'codex-*' OR LOWER(COALESCE(s.model,'')) LIKE 'chatgpt-%')`;
-  const openAiProvider = `(LOWER(COALESCE(s.provider,'')) IN ('openai',''))`;
-  const covered = `((s.platform='codex' AND (${openAiProvider} OR ${openAiModel})) OR (s.platform='opencode' AND ${openAiModel} AND ${openAiProvider}))`;
-  const paid = subscriptionEnabled() ? `CASE WHEN ${covered} THEN 0 ELSE ${api} END` : api;
-  // ventilation au prorata de l'estimation : suit le total reporte quand il existe, = estimation sinon
-  const share = `COALESCE((${api}) / NULLIF(${estimatedCost},0), 0)`;
-  const part = {
-    input: `COALESCE((${estPart.input}) * ${share}, 0)`,
-    cached: `COALESCE((${estPart.cached}) * ${share}, 0)`,
-    output: `COALESCE((${estPart.output}) * ${share}, 0)`,
-    reasoning: `COALESCE((${estPart.reasoning}) * ${share}, 0)`,
-  };
-  const paidPart = (expr) => subscriptionEnabled() ? `CASE WHEN ${covered} THEN 0 ELSE ${expr} END` : expr;
-  return { api, paid, part, paidPart };
-}
+function costs() { return buildCosts(subscriptionEnabled()); }
 const parisDateStr = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 function filters(query) {
   const clauses = [], params = [];
@@ -263,7 +231,7 @@ function activityHeatmap(base, params, price) {
     const dayIndex = (activityDays.indexOf(parts.weekday) + 7) % 7, hour = Number(parts.hour);
     const cell = cells[dayIndex * 24 + hour];
     if (row.nonempty) cell.sessions++;
-    cell.total += row.activity_platform === 'codex' ? (Number(row.input_tokens || 0) + Number(row.output_tokens || 0) + Number(row.reasoning_tokens || 0)) : (Number(row.input_tokens || 0) + Number(row.cached_input_tokens || 0) + Number(row.output_tokens || 0) + Number(row.reasoning_tokens || 0));
+    cell.total += row.activity_platform === 'codex' ? (Number(row.input_tokens || 0) + Number(row.output_tokens || 0)) : (Number(row.input_tokens || 0) + Number(row.cached_input_tokens || 0) + Number(row.output_tokens || 0) + Number(row.reasoning_tokens || 0));
     cell.apiCost += Number(row.api_cost) || 0;
     cell.paidCost += Number(row.paid_cost) || 0;
   }
@@ -277,7 +245,7 @@ export function data(query) {
   activityQuery.delete('from'); activityQuery.delete('to');
   activityQuery.set('from', activityRange.start); activityQuery.set('to', activityRange.end);
   const activityFilters = filters(activityQuery), activityBase = selectBase(activityFilters.where);
-  const summary = db.prepare(`SELECT SUM(CASE WHEN ${nonemptyRow} THEN 1 ELSE 0 END) sessions, COALESCE(SUM(s.input_tokens),0) input, COALESCE(SUM(s.cached_input_tokens),0) cached, COALESCE(SUM(s.output_tokens),0) output, COALESCE(SUM(s.reasoning_tokens),0) reasoning, COALESCE(SUM(${tokenTotal}),0) total, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.input_tokens END),0) codex_input, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.cached_input_tokens END),0) codex_cached, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.input_tokens END),0) opencode_input, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.cached_input_tokens END),0) opencode_cached, COALESCE(SUM(s.cached_input_tokens * (COALESCE(p.input_usd_per_million,0) - COALESCE(p.cached_input_usd_per_million,0)) / 1000000.0),0) cache_saved, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost, SUM(${price.part.input}) input_api_cost, SUM(${price.part.cached}) cached_api_cost, SUM(${price.part.output}) output_api_cost, SUM(${price.part.reasoning}) reasoning_api_cost, SUM(${price.paidPart(price.part.input)}) input_paid_cost, SUM(${price.paidPart(price.part.cached)}) cached_paid_cost, SUM(${price.paidPart(price.part.output)}) output_paid_cost, SUM(${price.paidPart(price.part.reasoning)}) reasoning_paid_cost, COALESCE(SUM(CASE WHEN ${missingPriceCond} THEN ${tokenTotal} ELSE 0 END),0) missing_price_tokens, COUNT(DISTINCT CASE WHEN ${missingPriceCond} THEN s.platform || '__' || COALESCE(s.model,'') END) missing_price_models ${base}`).get(...params);
+  const summary = db.prepare(`SELECT SUM(CASE WHEN ${nonemptyRow} THEN 1 ELSE 0 END) sessions, COALESCE(SUM(s.input_tokens),0) input, COALESCE(SUM(s.cached_input_tokens),0) cached, COALESCE(SUM(s.output_tokens),0) output, COALESCE(SUM(s.reasoning_tokens),0) reasoning, COALESCE(SUM(${tokenTotal}),0) total, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.input_tokens END),0) codex_input, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.cached_input_tokens END),0) codex_cached, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.output_tokens END),0) codex_output, COALESCE(SUM(CASE WHEN s.platform='codex' THEN s.reasoning_tokens END),0) codex_reasoning, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.input_tokens END),0) opencode_input, COALESCE(SUM(CASE WHEN s.platform='opencode' THEN s.cached_input_tokens END),0) opencode_cached, COALESCE(SUM(s.cached_input_tokens * (COALESCE(p.input_usd_per_million,0) - COALESCE(p.cached_input_usd_per_million,0)) / 1000000.0),0) cache_saved, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost, SUM(${price.part.input}) input_api_cost, SUM(${price.part.cached}) cached_api_cost, SUM(${price.part.output}) output_api_cost, SUM(${price.part.reasoning}) reasoning_api_cost, SUM(${price.paidPart(price.part.input)}) input_paid_cost, SUM(${price.paidPart(price.part.cached)}) cached_paid_cost, SUM(${price.paidPart(price.part.output)}) output_paid_cost, SUM(${price.paidPart(price.part.reasoning)}) reasoning_paid_cost, COALESCE(SUM(CASE WHEN ${missingPriceCond} THEN ${tokenTotal} ELSE 0 END),0) missing_price_tokens, COUNT(DISTINCT CASE WHEN ${missingPriceCond} THEN s.platform || '__' || COALESCE(s.model,'') END) missing_price_models ${base}`).get(...params);
   const dailyRows = db.prepare(`SELECT date(s.started_at,'localtime') day, COALESCE(s.model,'Modèle inconnu') model, SUM(${tokenTotal}) total, SUM(${price.api}) api_cost, SUM(${price.paid}) paid_cost ${base} GROUP BY day, s.model`).all(...params);
   const byDay = new Map(range.days.map((day) => [day, []])); for (const row of dailyRows) byDay.get(row.day)?.push(row);
   const daily = range.days.map((day) => ({ day, series: byDay.get(day) }));
@@ -327,7 +295,7 @@ function savePricing(body) {
     const existing = existingStmt.get(row.platform, row.model);
     const rates = RATE_FIELDS.map(([name, column]) => {
       const raw = row[name];
-      if (raw == null || raw === '') return Number(existing?.[column]) || 0;
+      if (raw == null || raw === '') return (column === 'cache_writes_usd_per_million' || column === 'per_minute_usd') ? (existing?.[column] ?? null) : (Number(existing?.[column]) || 0);
       const value = Number(String(raw).replace(',', '.'));
       if (!Number.isFinite(value) || value < 0) throw new Error('Prix non valide');
       return value;
