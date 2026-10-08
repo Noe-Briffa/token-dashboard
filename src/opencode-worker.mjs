@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openDatabase, collectCodex, collectOpenCode, readOpenCodeSkillEvents } from './collector.js';
+import { openDatabase, collectCodex, collectOpenCode, importSessions, parseCodexSession, readOpenCodeSkillEvents } from './collector.js';
 
 const mode = process.argv[2];
 const source = process.argv[3];
@@ -12,7 +12,19 @@ let db;
 
 try {
   db = openDatabase(database);
-  if (mode === 'opencode-skills') {
+  if (mode === 'codex-files') {
+    const parsed = [];
+    for (const file of process.argv.slice(4)) {
+      const rows = parseCodexSession(file);
+      for (const row of (Array.isArray(rows) ? rows : [rows])) {
+        if (row && (row.total || row.input || row.output || row.reasoning || row.cached)) parsed.push(row);
+      }
+    }
+    const inserted = importSessions(db, parsed);
+    const sessions = db.prepare("SELECT id, platform, provider, agent, source_path AS sourcePath, project, model, started_at AS startedAt, ended_at AS endedAt, duration_seconds AS durationSeconds, input_tokens AS input, cached_input_tokens AS cached, output_tokens AS output, reasoning_tokens AS reasoning, total_tokens AS total, reported_cost_usd AS reportedCost, model_calls AS modelCalls FROM sessions WHERE platform='codex'").all();
+    const base = new Set(sessions.map((row) => String(row.id).split('~')[0].split(':')[0]));
+    process.stdout.write(JSON.stringify({ result: { imported: inserted, sourceSessions: base.size, source, platform: 'codex' }, sessions, skillEvents: [] }));
+  } else if (mode === 'opencode-skills') {
     process.stdout.write(JSON.stringify({ skillEvents: readOpenCodeSkillEvents(source, skillSinceMs) }));
   } else {
     const result = mode === 'codex' ? collectCodex(db, { root: source }) : collectOpenCode(db, { file: source, collectSkills: false });

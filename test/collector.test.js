@@ -481,3 +481,68 @@ test('auto-adds missing models to pricing without duplicates', () => {
   assert.equal(db.prepare("SELECT COUNT(*) n FROM model_pricing WHERE model='gpt-new'").get().n, 2);
   db.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
+
+const codexFixture = (sessionId, model, total) => [
+  { timestamp: '2026-08-31T10:00:00Z', type: 'session_meta', payload: { session_id: sessionId, timestamp: '2026-08-31T10:00:00Z', cwd: 'C:/work', originator: 'Codex CLI' } },
+  { timestamp: '2026-08-31T10:01:00Z', type: 'turn_context', payload: { model } },
+  { timestamp: '2026-08-31T10:01:30Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 } } } },
+  { timestamp: '2026-08-31T10:02:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: total, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: total } } } },
+];
+const codexUsage = (input, total) => ({ timestamp: '2026-08-31T10:03:00Z', type: 'event_msg', payload: { info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: total } } } });
+const dumpCodex = (db) => db.prepare("SELECT id, platform, provider, agent, source_path, project, model, started_at, ended_at, duration_seconds, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, model_calls, reported_cost_usd FROM sessions WHERE platform='codex' ORDER BY id").all().map((row) => ({ ...row }));
+const twoFileRoot = (directory) => {
+  const root = path.join(directory, 'sessions');
+  fs.mkdirSync(root, { recursive: true });
+  const fileA = path.join(root, 'a.jsonl'), fileB = path.join(root, 'b.jsonl');
+  fs.writeFileSync(fileA, codexFixture('incr-A', 'gpt-incr', 100).map(JSON.stringify).join('\n'));
+  fs.writeFileSync(fileB, codexFixture('incr-B', 'gpt-incr', 50).map(JSON.stringify).join('\n'));
+  return { root, fileA, fileB };
+};
+
+test('collects Codex incrementally with the same state as a full parse', async () => {
+  const directory = temp(), { root, fileA } = twoFileRoot(directory);
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  const first = await collectCodexAsync(db, { root });
+  assert.equal(first.status, undefined);
+  assert.equal(first.imported, 2);
+  assert.equal(first.sourceSessions, 2);
+  fs.appendFileSync(fileA, '\n' + JSON.stringify(codexUsage(250, 250)));
+  const second = await collectCodexAsync(db, { root });
+  assert.equal(second.skipped, undefined);
+  assert.equal(second.imported, 1);
+  assert.equal(second.sourceSessions, 2);
+  assert.equal(db.prepare("SELECT total_tokens FROM sessions WHERE id='incr-A'").get().total_tokens, 250);
+  assert.equal(db.prepare("SELECT total_tokens FROM sessions WHERE id='incr-B'").get().total_tokens, 50);
+  const reference = openDatabase(path.join(directory, 'reference.sqlite'));
+  collectCodex(reference, { root });
+  assert.deepEqual(dumpCodex(db), dumpCodex(reference));
+  db.close(); reference.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('purges deleted Codex files without touching the survivors', async () => {
+  const directory = temp(), { root, fileB } = twoFileRoot(directory);
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  await collectCodexAsync(db, { root });
+  fs.rmSync(fileB);
+  const second = await collectCodexAsync(db, { root });
+  assert.equal(second.skipped, undefined);
+  assert.equal(second.sourceSessions, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM sessions WHERE platform='codex'").get().n, 1);
+  assert.equal(db.prepare("SELECT id FROM sessions WHERE platform='codex'").get().id, 'incr-A');
+  db.close(); fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('falls back to a full Codex parse when most files change', async () => {
+  const directory = temp(), { root, fileA, fileB } = twoFileRoot(directory);
+  const db = openDatabase(path.join(directory, 'usage.sqlite'));
+  await collectCodexAsync(db, { root });
+  fs.appendFileSync(fileA, '\n' + JSON.stringify(codexUsage(300, 300)));
+  fs.appendFileSync(fileB, '\n' + JSON.stringify(codexUsage(80, 80)));
+  const second = await collectCodexAsync(db, { root });
+  assert.equal(second.skipped, undefined);
+  assert.equal(second.sourceSessions, 2);
+  const reference = openDatabase(path.join(directory, 'reference.sqlite'));
+  collectCodex(reference, { root });
+  assert.deepEqual(dumpCodex(db), dumpCodex(reference));
+  db.close(); reference.close(); fs.rmSync(directory, { recursive: true, force: true });
+});

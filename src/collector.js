@@ -130,9 +130,11 @@ const integer = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const timestampMs = (value) => Number.isNaN(Date.parse(value || '')) ? null : Date.parse(value);
 const parisHour = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: '2-digit', hourCycle: 'h23' });
 const codexCaches = new WeakMap();
+const codexAsyncCaches = new WeakMap(); // signatures par fichier pour le worker incremental
 const openCodeCaches = new WeakMap();
 const openCodeSkillCaches = new WeakMap();
 const OPEN_CODE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const OPEN_CODE_SKILLS_INTERVAL_MS = 15 * 60 * 1000;
 
 // Familles tarifaires : un nouveau modele herite du tarif famille tant que sa ligne reste a 0.
 const FAMILY_PRICING = [
@@ -360,17 +362,42 @@ export function collectCodex(db, { root = defaultCodexRoot(), isolated = false }
   } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }
 }
 
+const escapeLike = (value) => String(value).replace(/[\\%_]/g, (char) => '\\' + char);
+
 export async function collectCodexAsync(db, { root = defaultCodexRoot() } = {}) {
   const files = filesUnder(root);
-  const signature = sourceSignature(files), cache = codexCaches.get(db) || { root, signature: null, files: new Map() };
+  const signature = sourceSignature(files), cache = codexAsyncCaches.get(db) || { root, signature: null, files: new Map() };
   if (cache.root === root && cache.signature === signature) return { ...cache.result, imported: 0, skipped: true };
   cache.root = root;
   if (!files.length) return { imported: 0, source: root, platform: 'codex', sourceSessions: 0 };
+  const known = new Set(files);
+  const changed = files.filter((item) => cache.files.get(item) !== statSignature(item));
+  const removed = [...cache.files.keys()].filter((item) => !known.has(item));
+  const incremental = cache.signature != null && changed.length <= Math.ceil(files.length / 2);
   try {
-    const result = importIsolatedProjection(db, await runIsolatedCollectorAsync('codex', root), 'codex');
+    let result;
+    if (incremental) {
+      const payload = await runIsolatedCollectorAsync('codex-files', root, 120000, changed);
+      db.exec('BEGIN');
+      try {
+        const forget = db.prepare("DELETE FROM sessions WHERE platform='codex' AND (source_path = ? OR source_path LIKE ? ESCAPE '\\')");
+        for (const item of [...changed, ...removed]) forget.run(item, escapeLike(item) + ':%');
+        const imported = importSessions(db, payload.sessions);
+        db.exec('COMMIT');
+        const ids = db.prepare("SELECT id FROM sessions WHERE platform='codex'").all();
+        const sourceSessions = new Set(ids.map((row) => String(row.id).split('~')[0].split(':')[0])).size;
+        result = { imported, sourceSessions, source: root, platform: 'codex' };
+      } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }
+      for (const item of changed) cache.files.set(item, statSignature(item));
+      for (const item of removed) cache.files.delete(item);
+    } else {
+      result = importIsolatedProjection(db, await runIsolatedCollectorAsync('codex', root), 'codex');
+      cache.files.clear();
+      for (const item of files) cache.files.set(item, statSignature(item));
+    }
     cache.signature = signature;
     cache.result = result;
-    codexCaches.set(db, cache);
+    codexAsyncCaches.set(db, cache);
     return result;
   } catch (error) {
     return { imported: 0, source: root, platform: 'codex', status: 'not_connected', error: error.message };
@@ -524,7 +551,7 @@ async function collectOpenCodeIsolatedAsync(db, file) {
 export async function collectOpenCodeSkillsAsync(db, { file = defaultOpenCodeDatabase() } = {}) {
   if (!fs.existsSync(file)) return { imported: 0, source: file, platform: 'opencode', status: 'not_connected' };
   const signature = openCodeSignature(file), cached = openCodeSkillCaches.get(db);
-  if (cached?.file === file && Date.now() - cached.collectedAt < OPEN_CODE_REFRESH_INTERVAL_MS) return { ...cached.result, imported: 0, skipped: true, stale: true };
+  if (cached?.file === file && Date.now() - cached.collectedAt < OPEN_CODE_SKILLS_INTERVAL_MS) return { ...cached.result, imported: 0, skipped: true, stale: true };
   if (cached?.file === file && cached.signature === signature) return { ...cached.result, imported: 0, skipped: true };
   try {
     const sinceMs = openCodeSkillSince(db);

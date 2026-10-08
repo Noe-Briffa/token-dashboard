@@ -45,9 +45,7 @@ function refresh() {
   if (refreshPromise) return refreshPromise;
   refreshState = { running: true, result: null, error: null, startedAt: new Date().toISOString(), finishedAt: null };
   refreshPromise = (async () => {
-    const skills = await refreshSkills();
-    const opencode = await collectOpenCodeAsync(db);
-    const codex = await collectCodexAsync(db);
+    const [skills, opencode, codex] = await Promise.all([refreshSkills(), collectOpenCodeAsync(db), collectCodexAsync(db)]);
     if (opencode && opencode.status !== 'not_connected' && !opencode.error) lastRefreshAt.opencode = new Date().toISOString();
     if (codex && codex.status !== 'not_connected' && !codex.error) lastRefreshAt.codex = new Date().toISOString();
     const result = { codex, opencode, skills };
