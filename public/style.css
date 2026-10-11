@@ -164,7 +164,7 @@ input::placeholder { color: var(--ink-muted); }
 .metric[title] label { cursor: help; }
 
 .limits { margin-top: 16px; }
-.limit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 28px; }
+.limit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 8px 28px; }
 .limit-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .limit-head b { color: var(--ink); font-size: 12px; }
 .limit-head span { color: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
