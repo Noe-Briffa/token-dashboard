@@ -526,7 +526,8 @@ function renderLimits(limits) {
   const alert = [['5 heures', limits.primary], ['Hebdo', limits.secondary]].filter(([, window]) => low(window)).map(([label]) => label).join(' et ');
   const badge = alert ? `<b class="limit-alert">⚠ ${escape(alert)} sous les ${LIMIT_ALERT} %</b>` : '';
   const toggle = `<button id="limits-history-toggle" class="head-toggle" aria-pressed="${showHistory}">${showHistory ? 'Masquer le graphique' : 'Afficher le graphique'}</button>`;
-  const grid = `<div class="limit-grid">${bar('5 heures', limits.primary, limits.status !== 'connected')}${bar('Hebdo', limits.secondary, limits.status !== 'connected')}</div>${showHistory ? '<div class="limit-history" id="limit-history"></div>' : ''}`;
+  const bars = [['5 heures', limits.primary], ['Hebdo', limits.secondary]].filter(([, window]) => window).map(([label, window]) => bar(label, window, limits.status !== 'connected')).join('');
+  const grid = `<div class="limit-grid">${bars}</div>${showHistory ? '<div class="limit-history" id="limit-history"></div>' : ''}`;
   if (limits.status === 'connected') el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span>${badge || 'temps réel'}</span>${toggle}</div>${grid}`;
   else if (limits.primary || limits.secondary) el.innerHTML = `<div class="panel-head"><h2>${title}</h2><span class="muted">${badge ? `${badge} ` : ''}${escape(note)} · ${escape(ageLabel(limits.fetchedAt))}</span><span class="limit-actions"><button id="limits-retry">Réessayer</button>${toggle}</span></div>${grid}`;
   else el.innerHTML = `<div class="panel-head"><h2>Limites Codex</h2><span class="muted">${escape(note)}</span><button id="limits-retry">Réessayer</button></div>`;

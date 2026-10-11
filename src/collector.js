@@ -492,8 +492,35 @@ export function normalizeLimits(payload) {
     const at = Number(window.reset_at) * 1000;
     return { remaining: 100 - used, resetsAt: Number.isFinite(at) && at > 0 ? new Date(at).toISOString() : null };
   };
+  // OpenAI expose parfois une seule fenetre, voire inverse les slots : classer par duree.
+  // 5 heures = 18000 s, hebdo = 604800 s (tolerance 5 %), repli positionnel sinon.
+  const secondsOf = (window) => {
+    for (const key of ['limit_window_seconds', 'limit_window_secs', 'window_seconds', 'window_secs']) {
+      const n = Number(window?.[key]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    for (const key of ['limit_window_minutes', 'window_minutes']) {
+      const n = Number(window?.[key]);
+      if (Number.isFinite(n) && n > 0) return n * 60;
+    }
+    return null;
+  };
+  const near = (secs, target) => secs !== null && Math.abs(secs - target) / target <= 0.05;
   const rate = payload?.rate_limit || {};
-  const primary = remaining(rate.primary_window), secondary = remaining(rate.secondary_window);
+  let primary = null, secondary = null;
+  const unclassified = [];
+  for (const slot of [rate.primary_window, rate.secondary_window]) {
+    const value = remaining(slot);
+    if (!value) continue;
+    const secs = secondsOf(slot);
+    if (near(secs, 604800)) { if (!secondary) secondary = value; else unclassified.push(value); }
+    else if (near(secs, 18000)) { if (!primary) primary = value; else unclassified.push(value); }
+    else unclassified.push(value);
+  }
+  for (const value of unclassified) {
+    if (!primary) primary = value;
+    else if (!secondary) secondary = value;
+  }
   if (!primary && !secondary) return { status: 'empty', plan: payload?.plan_type || null, primary: null, secondary: null };
   return { status: 'connected', plan: payload?.plan_type || null, primary, secondary };
 }

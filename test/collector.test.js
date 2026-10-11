@@ -380,6 +380,9 @@ test('normalizes Codex rate limits to remaining percent with reset time', async 
   assert.deepEqual(normalizeLimits(payload), { status: 'connected', plan: 'plus', primary: { remaining: 75, resetsAt: '2026-05-22T14:16:34.000Z' }, secondary: { remaining: 82, resetsAt: '2026-05-26T20:20:37.000Z' } });
   assert.equal(normalizeLimits({}).status, 'empty');
   assert.equal(normalizeLimits({ rate_limit: { primary_window: null, secondary_window: null } }).status, 'empty');
+  assert.deepEqual(normalizeLimits({ plan_type: 'pro', rate_limit: { primary_window: { used_percent: 3, reset_at: 1779826837, limit_window_seconds: 604800 }, secondary_window: null } }), { status: 'connected', plan: 'pro', primary: null, secondary: { remaining: 97, resetsAt: '2026-05-26T20:20:37.000Z' } });
+  assert.deepEqual(normalizeLimits({ rate_limit: { primary_window: { used_percent: 10, reset_at: 1, limit_window_seconds: 604800 }, secondary_window: { used_percent: 20, reset_at: 1, limit_window_seconds: 18000 } } }).primary.remaining, 80);
+  assert.deepEqual(normalizeLimits({ rate_limit: { primary_window: null, secondary_window: { used_percent: 40, reset_at: 1, window_minutes: 300 } } }).primary.remaining, 60);
   const directory = temp(), auth = path.join(directory, 'auth.json');
   fs.writeFileSync(auth, JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'x', account_id: 'y' } }));
   const seen = [];

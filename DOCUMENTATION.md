@@ -585,6 +585,8 @@ Le bandeau des limites affiche :
 
 Sous `20 %` restant, la limite est signalée comme basse.
 
+Les plans Pro exposent uniquement la fenêtre hebdomadaire, sans fenêtre cinq heures : le bandeau affiche alors la seule barre `Hebdo`. L'affectation ne dépend pas de l'ordre renvoyé par l'API mais de la durée de chaque fenêtre (`limit_window_seconds` : `18000` cinq heures, `604800` hebdo).
+
 Les états possibles incluent notamment :
 
 - connecté ;
